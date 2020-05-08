@@ -3,7 +3,7 @@ import pandas as pd
 
 dataset = "dannyv"
 # table = "test_01"
-table = "test_02m"
+table = "test_01"
 project = "cptsrewards-hrd"
 bucket = 'location_matching'
 # gcp_staging = 'inmarket-datasci'
