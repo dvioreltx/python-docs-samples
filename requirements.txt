@@ -1,0 +1,4 @@
+# used
+pandas==1.0.3
+gcsfs==0.6.2
+pandas_gbq==0.13.1
