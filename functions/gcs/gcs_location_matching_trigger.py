@@ -1,10 +1,8 @@
-# from google.cloud import storage
 import datetime
 import logging
 import pandas as pd
 
 dataset = "dannyv"
-# table = "test_01"
 table = "test_02"
 project = "cptsrewards-hrd"
 bucket = 'location_matching'
@@ -20,20 +18,14 @@ def _verify_fields(columns):
     validation_fields = {'chain name/chain id/sic code/NAICS': True, 'address': True, 'city': False,
                          'state': False, 'zip': False}
     column_validation_fields = []
-    # columns_required_fields = []
-    # columns_optional_fields = []
-    # search for required fields
-    # for required_field in required_fields.:
     for required_field in validation_fields.keys():
         if "/" in required_field:
             tokens = required_field.split('/')
         else:
             tokens = [required_field]
-        # any of the tokens should get... and return the real column name
         found = False
         for token in tokens:
             if token in columns:
-                # columns_required_fields.append(token)
                 column_validation_fields.append(token)
                 found = True
                 break
@@ -51,7 +43,6 @@ def process_created(data, context):
             return
         logging.info(f'File: {file_name}')
         print(f'NOPFile: {file_name}')
-        # df = pd.read_csv(f'gs://{bucket}/{file_name}', names=['col0', 'col1'], sep=',')
         raw_data = pd.read_csv(f'gs://{bucket}/{file_name}', sep=',')
         column_validation_fields = _verify_fields(raw_data.keys())
         desired_data = raw_data[column_validation_fields]
@@ -65,4 +56,5 @@ def process_created(data, context):
         print(f'Unexpected error: {e}')
 
 
-process_created({'name': 'dviorel/Sample_1 updated.csv'}, None)
+# process_created({'name': 'dviorel/Sample_1 updated.csv'}, None)
+process_created({'name': 'dviorel/sample_2_subset.csv'}, None)
