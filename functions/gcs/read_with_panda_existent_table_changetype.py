@@ -28,9 +28,9 @@ def process_gcs_created(data, context):
         # df = df.astype({'col0': str})
         df = df.astype(str)
         df.to_gbq(f'{dataset}.{table}', if_exists='append', progress_bar=False)
-        print(f'Rows:{len(df.index)}')
-    except NotImplementedError as e:
+        print(f'Rows: {len(df.index)}')
+    except Exception as e:
         print(f'Unexpected error: {e}')
 
 
-process_gcs_created({'name': 'test_04.csv'}, None)
+process_gcs_created({'name': 'dviorel/test_02.csv'}, None)
