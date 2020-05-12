@@ -1,6 +1,9 @@
 import datetime
 import logging
 import pandas as pd
+import google.auth
+from google.cloud import bigquery
+from google.cloud import bigquery_storage_v1beta1
 
 dataset = "dannyv"
 table = "test_02"
@@ -28,6 +31,16 @@ def _verify_fields(columns, validation_fields):
     return column_validation_fields
 
 
+def _clean_zip(zip_code):
+    if zip_code is None or len(zip_code) == 0:
+        return zip_code
+    if len(zip_code) > 5:
+        return zip_code[:5]
+    if len(zip_code) < 5:
+        return zip_code.ljust(5, '0')
+    return zip_code
+
+
 def process_created(data, context):
     try:
         validation_fields = {'chain name/chain id/sic code/NAICS': (True, 'chain_name'),
@@ -42,6 +55,20 @@ def process_created(data, context):
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)
         selected_columns = raw_data[column_validation_fields].rename(columns=lambda name: name.replace(' ', '_').
                                                                      replace('(', '_').replace(')', '_'), inplace=False)
+        # Read all US states
+        credentials, your_project_id = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        bqclient = bigquery.Client(
+            project=project,
+            credentials=credentials
+        )
+        bqstorageclient = bigquery_storage_v1beta1.BigQueryStorageClient(
+            credentials=credentials
+        )
+        query_string = 'SELECT state_abbr, state_name from aggdata.us_states'
+        df_states = (bqclient.query(query_string).result().to_dataframe(bqstorage_client=bqstorageclient))
+
         # Complete columns not present in file
         for key in validation_fields:
             if not validation_fields[key][0] and validation_fields[key][1] not in selected_columns:
