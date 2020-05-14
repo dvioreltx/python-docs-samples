@@ -43,7 +43,10 @@ def _clean_zip(zip_code):
 
 
 def _get_state_code(state, df_states):
-    if len(state) == 2:
+    try:
+        if len(state) == 2:
+            return state
+    except Exception as e:
         return state
     if state == 'Washington DC':
         state = 'Washington'
@@ -69,7 +72,7 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
     # remove commas
     address_full = address_full.replace(',', ' ')
     # if address_full == '6545 TRIGO RD ISLA VISTA':
-    if '6545 TRIGO RD ISLA VISTA' in address_full:
+    if '2400 ALABAMA ST BELLINGHAM WA 98229' in address_full:
         stop = True
     tokens = address_full.split(' ')
     tokens = list(filter(None, tokens))
@@ -83,9 +86,14 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
     # look for state
     found = False
     state = ''
+
+
+
     for index, row in df_states.iterrows():
         if not first_state:
             state_position = len(tokens) - (1 if include_zip else 2) - 1
+            if row['state_abbr'] == 'WA':
+                stop_this = 1
             if len(tokens[state_position]) == 2 and tokens[state_position].lower() == row['state_abbr'].lower():
                 state = row['state_abbr']
                 found = True
@@ -140,21 +148,8 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
                 address = sub_address[:sub_address.rfind(' ')]
                 filtered_cities = df_cities[df_cities['state'] == state]
 
-                # 1 char
-                expected_match = filtered_cities[filtered_cities['city'].str.lower() == city.lower()]
-                if len(expected_match.index) > 0:
-                    city_found = True
-                if not city_found and len(sub_address_tokens) > 3:
-                    # 2 chars
-                    expected_city = sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
-                        sub_address_tokens[len(sub_address_tokens) - 1]
-                    expected_match = filtered_cities[filtered_cities['city'].str.lower() == expected_city.lower()]
-                    if len(expected_match.index) > 0:
-                        city = expected_city
-                        address = sub_address[:sub_address.rfind(expected_city)]
-                        city_found = True
+                # 3 chars
                 if not city_found and len(sub_address_tokens) > 4:
-                    # 3 chars
                     expected_city = sub_address_tokens[len(sub_address_tokens) - 3] + ' ' + \
                                     sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
                                     sub_address_tokens[len(sub_address_tokens) - 1]
@@ -163,6 +158,22 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
                         city = expected_city
                         address = sub_address[:sub_address.rfind(expected_city)]
                         city_found = True
+                # 2 chars
+                if not city_found and len(sub_address_tokens) > 3:
+                    expected_city = sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
+                                    sub_address_tokens[len(sub_address_tokens) - 1]
+                    expected_match = filtered_cities[filtered_cities['city'].str.lower() == expected_city.lower()]
+                    if len(expected_match.index) > 0:
+                        city = expected_city
+                        address = sub_address[:sub_address.rfind(expected_city)]
+                        city_found = True
+                # 1 char
+                if not city_found:
+                    expected_match = filtered_cities[filtered_cities['city'].str.lower() == city.lower()]
+                    if len(expected_match.index) > 0:
+                        address = sub_address[:sub_address.rfind(city)]
+                        city_found = True
+
                 # if not city_found:
                 #     for index_city, row_city in filtered_cities.iterrows():
                 #         if row_city['city'] is not None and row_city['city'].lower() in address_full.lower():
@@ -180,7 +191,7 @@ def process_created(data, context):
     try:
         logging.debug(f'Started {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
         validation_fields = {'chain/chain id/sic code/naics': (True, 'chain_name'),
-                             'address/address full/address full (no zip)': (True, 'address'),
+                             'address/address full/address full (no zip)': (False, 'address'),
                              'city': (False, 'city'), 'state': (False, 'state'), 'zip': (False, 'zip')}
         file_name = data['name']
         if file_name.endswith('/'):
@@ -246,9 +257,17 @@ def process_created(data, context):
                 selected_columns.at[index, 'city'] = city
                 selected_columns.at[index, 'zip'] = zip_code
 
-        selected_columns['zip'] = selected_columns['zip'].apply(lambda zip_code: _clean_zip(zip_code))
-        selected_columns['state'] = selected_columns['state'].apply(lambda state: _get_state_code(state, df_states))
-        temp_table = f'tmp_{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}'
+        selected_columns['zip'] = selected_columns['zip'].apply(lambda zip_code_lambda: _clean_zip(zip_code_lambda))
+        selected_columns['state'] = selected_columns['state'].apply(lambda state_lambda:
+                                                                    _get_state_code(state_lambda, df_states))
+        selected_columns.rename(columns={'chain': 'chain_name', 'address': 'street_address'}, inplace=True)
+        selected_columns['category'] = None
+        selected_columns['sic_code'] = None
+        selected_columns['lat'] = None
+        selected_columns['lon'] = None
+        selected_columns = selected_columns.drop(['address_full'], axis=1)
+        # temp_table = f'tmp_{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}'
+        temp_table = f'store_full_address'
         logging.info(f'Will write to table: {temp_table}')
         selected_columns.to_gbq(f'{dataset}.{temp_table}', project_id=project, progress_bar=False)
         logging.debug(f'Finished {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
@@ -258,7 +277,11 @@ def process_created(data, context):
 
 # process_created({'name': 'dviorel/Sample_1 updated.csv'}, None)
 # process_created({'name': 'dviorel/sample_2_small_subset_nozip.csv'}, None)
+
 # process_created({'name': 'dviorel/matching_list.txt'}, None)
-# process_created({'name': 'dviorel/store_only_zip.txt'}, None)
+# ###  process_created({'name': 'dviorel/store_only_zip.txt'}, None)
 # process_created({'name': 'dviorel/walmart_match_issue.txt'}, None)
 process_created({'name': 'dviorel/store_full_address.txt'}, None)
+# process_created({'name': 'dviorel/simple_list.txt'}, None)
+# process_created({'name': 'dviorel/sic_code_match.txt'}, None)
+# process_created({'name': 'dviorel/match_multiple_sic_codes.txt'}, None)
