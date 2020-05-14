@@ -87,101 +87,187 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
     found = False
     state = ''
 
-
-
-    for index, row in df_states.iterrows():
-        if not first_state:
-            state_position = len(tokens) - (1 if include_zip else 2) - 1
-            if row['state_abbr'] == 'WA':
-                stop_this = 1
-            if len(tokens[state_position]) == 2 and tokens[state_position].lower() == row['state_abbr'].lower():
-                state = row['state_abbr']
-                found = True
-            if tokens[state_position].lower() == row['state_name'].lower():
-                state = row['state_name']
-                found = True
-            if tokens[state_position - 1].lower() + ' ' + tokens[state_position].lower() == \
-                    row['state_name'].lower():
-                state = row['state_name']
-                found = True
-        else:
-            state_position = len(tokens) - (2 if include_zip else 3) - 1
-            if len(tokens[state_position]) == 2 and tokens[state_position].upper() == row['state_abbr'].upper():
-                state = row['state_abbr']
-                found = True
-            if len(tokens[state_position - 1]) == 2 and tokens[state_position - 1].upper() == row['state_abbr'].upper():
-                state = row['state_abbr']
-                found = True
-            if tokens[state_position].lower() == row['state_name'].lower():
-                state = row['state_name']
-                found = True
-            if tokens[state_position - 1].lower() == row['state_name'].lower():
-                state = row['state_name']
-                found = True
-            if tokens[state_position - 1].lower() + ' ' + tokens[state_position].lower() == \
-                    row['state_name'].lower():
-                state = row['state_name']
+    if not first_state:
+        state_position = len(tokens) - (1 if include_zip else 2) - 1
+        expected_match = df_states[df_states['state_abbr'].str.upper() == tokens[state_position].upper()]
+        if len(expected_match.index) > 0:
+            state = tokens[state_position]
+            found = True
+        if not found:
+            expected_match = df_states[df_states['state_name'].str.upper() == tokens[state_position].upper()]
+            if len(expected_match.index) > 0:
+                state = tokens[state_position]
                 found = True
         if not found:
-            if row['state_name'].lower() in address_full.lower():
-                position = address_full.lower().rfind(row['state_name'].lower())
-                # state = row['state_name']
-                state = address_full[position:position + len(row['state_name'])]
+            expected_match = df_states[df_states['state_name'].str.lower() == tokens[state_position - 1].lower()
+                                       + ' ' + tokens[state_position].lower()]
+            if len(expected_match.index) > 0:
+                state = tokens[state_position - 1] + ' ' + tokens[state_position]
                 found = True
-        if found:
-            if first_state:
-                if include_zip:
-                    city = address_full[address_full.rfind(state) + len(state):address_full.rfind(' ')]
-                else:
-                    city = address_full[address_full.rfind(state) + len(state):]
-                address = address_full[:address_full.rfind(city)]
-                state = _get_state_code(state, df_states)
+    else:
+        state_position = len(tokens) - (2 if include_zip else 3) - 1
+        expected_match = df_states[df_states['state_abbr'].str.upper() == tokens[state_position].upper()]
+        if len(expected_match.index) > 0:
+            state = tokens[state_position]
+            found = True
+        if not found:
+            expected_match = df_states[df_states['state_name'].str.upper() == tokens[state_position].upper()]
+            if len(expected_match.index) > 0:
+                state = tokens[state_position]
+                found = True
+        if not found:
+            expected_match = df_states[df_states['state_name'].str.lower() == tokens[state_position - 1].lower()
+                                       + ' ' + tokens[state_position].lower()]
+            if len(expected_match.index) > 0:
+                state = tokens[state_position - 1] + ' ' + tokens[state_position]
+                found = True
+    if found:
+        if first_state:
+            if include_zip:
+                city = address_full[address_full.rfind(state) + len(state):address_full.rfind(' ')]
             else:
-                # try city with the previous token
-                city_found = False
-                position = address_full.rfind(state)
-                sub_address = address_full[:position]
-                sub_address_tokens = sub_address.split(' ')
-                sub_address_tokens = list(filter(None, sub_address_tokens))
-                city = sub_address_tokens[len(sub_address_tokens) - 1]
-                state = _get_state_code(state, df_states)
-                address = sub_address[:sub_address.rfind(' ')]
-                filtered_cities = df_cities[df_cities['state'] == state]
+                city = address_full[address_full.rfind(state) + len(state):]
+            address = address_full[:address_full.rfind(city)]
+            state = _get_state_code(state, df_states)
+        else:
+            # try city with the previous token
+            city_found = False
+            position = address_full.rfind(state)
+            sub_address = address_full[:position]
+            sub_address_tokens = sub_address.split(' ')
+            sub_address_tokens = list(filter(None, sub_address_tokens))
+            city = sub_address_tokens[len(sub_address_tokens) - 1]
+            state = _get_state_code(state, df_states)
+            address = sub_address[:sub_address.rfind(' ')]
+            filtered_cities = df_cities[df_cities['state'] == state]
 
-                # 3 chars
-                if not city_found and len(sub_address_tokens) > 4:
-                    expected_city = sub_address_tokens[len(sub_address_tokens) - 3] + ' ' + \
-                                    sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
-                                    sub_address_tokens[len(sub_address_tokens) - 1]
-                    expected_match = filtered_cities[filtered_cities['city'].str.lower() == expected_city.lower()]
-                    if len(expected_match.index) > 0:
-                        city = expected_city
-                        address = sub_address[:sub_address.rfind(expected_city)]
-                        city_found = True
-                # 2 chars
-                if not city_found and len(sub_address_tokens) > 3:
-                    expected_city = sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
-                                    sub_address_tokens[len(sub_address_tokens) - 1]
-                    expected_match = filtered_cities[filtered_cities['city'].str.lower() == expected_city.lower()]
-                    if len(expected_match.index) > 0:
-                        city = expected_city
-                        address = sub_address[:sub_address.rfind(expected_city)]
-                        city_found = True
-                # 1 char
-                if not city_found:
-                    expected_match = filtered_cities[filtered_cities['city'].str.lower() == city.lower()]
-                    if len(expected_match.index) > 0:
-                        address = sub_address[:sub_address.rfind(city)]
-                        city_found = True
+            # 3 chars
+            if not city_found and len(sub_address_tokens) > 4:
+                expected_city = sub_address_tokens[len(sub_address_tokens) - 3] + ' ' + \
+                                sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
+                                sub_address_tokens[len(sub_address_tokens) - 1]
+                expected_match = filtered_cities[filtered_cities['city'].str.lower() == expected_city.lower()]
+                if len(expected_match.index) > 0:
+                    city = expected_city
+                    address = sub_address[:sub_address.rfind(expected_city)]
+                    city_found = True
+            # 2 chars
+            if not city_found and len(sub_address_tokens) > 3:
+                expected_city = sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
+                                sub_address_tokens[len(sub_address_tokens) - 1]
+                expected_match = filtered_cities[filtered_cities['city'].str.lower() == expected_city.lower()]
+                if len(expected_match.index) > 0:
+                    city = expected_city
+                    address = sub_address[:sub_address.rfind(expected_city)]
+                    city_found = True
+            # 1 char
+            if not city_found:
+                expected_match = filtered_cities[filtered_cities['city'].str.lower() == city.lower()]
+                if len(expected_match.index) > 0:
+                    address = sub_address[:sub_address.rfind(city)]
+                    city_found = True
 
-                # if not city_found:
-                #     for index_city, row_city in filtered_cities.iterrows():
-                #         if row_city['city'] is not None and row_city['city'].lower() in address_full.lower():
-                #             position = address_full.lower().rfind(row_city['city'].lower())
-                #             city = address_full[position:position + len(row_city['city'])]
-                #             address = address_full[:position]
-                #             break
-            break
+            # if not city_found:
+            #     for index_city, row_city in filtered_cities.iterrows():
+            #         if row_city['city'] is not None and row_city['city'].lower() in address_full.lower():
+            #             position = address_full.lower().rfind(row_city['city'].lower())
+            #             city = address_full[position:position + len(row_city['city'])]
+            #             address = address_full[:position]
+            #             break
+    if not found:
+        for index, row in df_states.iterrows():
+            if not first_state:
+                state_position = len(tokens) - (1 if include_zip else 2) - 1
+                if row['state_abbr'] == 'WA':
+                    stop_this = 1
+                if len(tokens[state_position]) == 2 and tokens[state_position].lower() == row['state_abbr'].lower():
+                    state = row['state_abbr']
+                    found = True
+                if tokens[state_position].lower() == row['state_name'].lower():
+                    state = row['state_name']
+                    found = True
+                if tokens[state_position - 1].lower() + ' ' + tokens[state_position].lower() == \
+                        row['state_name'].lower():
+                    state = row['state_name']
+                    found = True
+            else:
+                state_position = len(tokens) - (2 if include_zip else 3) - 1
+                if len(tokens[state_position]) == 2 and tokens[state_position].upper() == row['state_abbr'].upper():
+                    state = row['state_abbr']
+                    found = True
+                if len(tokens[state_position - 1]) == 2 and tokens[state_position - 1].upper() == row['state_abbr'].upper():
+                    state = row['state_abbr']
+                    found = True
+                if tokens[state_position].lower() == row['state_name'].lower():
+                    state = row['state_name']
+                    found = True
+                if tokens[state_position - 1].lower() == row['state_name'].lower():
+                    state = row['state_name']
+                    found = True
+                if tokens[state_position - 1].lower() + ' ' + tokens[state_position].lower() == \
+                        row['state_name'].lower():
+                    state = row['state_name']
+                    found = True
+            if not found:
+                if row['state_name'].lower() in address_full.lower():
+                    position = address_full.lower().rfind(row['state_name'].lower())
+                    # state = row['state_name']
+                    state = address_full[position:position + len(row['state_name'])]
+                    found = True
+            if found:
+                if first_state:
+                    if include_zip:
+                        city = address_full[address_full.rfind(state) + len(state):address_full.rfind(' ')]
+                    else:
+                        city = address_full[address_full.rfind(state) + len(state):]
+                    address = address_full[:address_full.rfind(city)]
+                    state = _get_state_code(state, df_states)
+                else:
+                    # try city with the previous token
+                    city_found = False
+                    position = address_full.rfind(state)
+                    sub_address = address_full[:position]
+                    sub_address_tokens = sub_address.split(' ')
+                    sub_address_tokens = list(filter(None, sub_address_tokens))
+                    city = sub_address_tokens[len(sub_address_tokens) - 1]
+                    state = _get_state_code(state, df_states)
+                    address = sub_address[:sub_address.rfind(' ')]
+                    filtered_cities = df_cities[df_cities['state'] == state]
+
+                    # 3 chars
+                    if not city_found and len(sub_address_tokens) > 4:
+                        expected_city = sub_address_tokens[len(sub_address_tokens) - 3] + ' ' + \
+                                        sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
+                                        sub_address_tokens[len(sub_address_tokens) - 1]
+                        expected_match = filtered_cities[filtered_cities['city'].str.lower() == expected_city.lower()]
+                        if len(expected_match.index) > 0:
+                            city = expected_city
+                            address = sub_address[:sub_address.rfind(expected_city)]
+                            city_found = True
+                    # 2 chars
+                    if not city_found and len(sub_address_tokens) > 3:
+                        expected_city = sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
+                                        sub_address_tokens[len(sub_address_tokens) - 1]
+                        expected_match = filtered_cities[filtered_cities['city'].str.lower() == expected_city.lower()]
+                        if len(expected_match.index) > 0:
+                            city = expected_city
+                            address = sub_address[:sub_address.rfind(expected_city)]
+                            city_found = True
+                    # 1 char
+                    if not city_found:
+                        expected_match = filtered_cities[filtered_cities['city'].str.lower() == city.lower()]
+                        if len(expected_match.index) > 0:
+                            address = sub_address[:sub_address.rfind(city)]
+                            city_found = True
+
+                    # if not city_found:
+                    #     for index_city, row_city in filtered_cities.iterrows():
+                    #         if row_city['city'] is not None and row_city['city'].lower() in address_full.lower():
+                    #             position = address_full.lower().rfind(row_city['city'].lower())
+                    #             city = address_full[position:position + len(row_city['city'])]
+                    #             address = address_full[:position]
+                    #             break
+                break
     if not found:
         raise Exception(f'No data found for {address_full}')
     return address, state, city, zip_code
@@ -262,12 +348,16 @@ def process_created(data, context):
                                                                     _get_state_code(state_lambda, df_states))
         selected_columns.rename(columns={'chain': 'chain_name', 'address': 'street_address'}, inplace=True)
         selected_columns['category'] = None
-        selected_columns['sic_code'] = None
+        # selected_columns['sic_code'] = None
         selected_columns['lat'] = None
         selected_columns['lon'] = None
-        selected_columns = selected_columns.drop(['address_full'], axis=1)
-        # temp_table = f'tmp_{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}'
-        temp_table = f'store_full_address'
+        if 'address_full' in selected_columns.columns:
+            selected_columns = selected_columns.drop(['address_full'], axis=1)
+        if 'sic_code' not in selected_columns.columns:
+            selected_columns['sic_code'] = None
+        # selected_columns = selected_columns.drop(['address_full'], axis=1)
+        temp_table = f'tmp_{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}'
+        # temp_table = f'sic_code_match'
         logging.info(f'Will write to table: {temp_table}')
         selected_columns.to_gbq(f'{dataset}.{temp_table}', project_id=project, progress_bar=False)
         logging.debug(f'Finished {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
@@ -281,7 +371,7 @@ def process_created(data, context):
 # process_created({'name': 'dviorel/matching_list.txt'}, None)
 # ###  process_created({'name': 'dviorel/store_only_zip.txt'}, None)
 # process_created({'name': 'dviorel/walmart_match_issue.txt'}, None)
-process_created({'name': 'dviorel/store_full_address.txt'}, None)
+# process_created({'name': 'dviorel/store_full_address.txt'}, None)
 # process_created({'name': 'dviorel/simple_list.txt'}, None)
-# process_created({'name': 'dviorel/sic_code_match.txt'}, None)
+process_created({'name': 'dviorel/sic_code_match.txt'}, None)
 # process_created({'name': 'dviorel/match_multiple_sic_codes.txt'}, None)
