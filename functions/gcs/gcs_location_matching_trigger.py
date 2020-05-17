@@ -274,6 +274,7 @@ def process_created(data, context):
                             from `{dataset}.{temp_table}`  
         """
         bq_client.query(add_clean_fields, project=project)
+        # Determine which query should run
         logging.debug(f'Finished {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
     except Exception as e:
         logging.exception(f'Unexpected error {e}')
