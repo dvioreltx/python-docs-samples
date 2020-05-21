@@ -1,7 +1,7 @@
 import datetime
+import google.auth
 import logging
 import pandas as pd
-import google.auth
 from google.cloud import bigquery
 from google.cloud import bigquery_storage_v1beta1
 
@@ -9,6 +9,12 @@ dataset = "dannyv"
 project = "cptsrewards-hrd"
 bucket = 'location_matching'
 logging.basicConfig(level=logging.DEBUG)
+
+url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
+query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
+query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
+query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
+               'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
 
 
 def _verify_fields(columns, validation_fields):
@@ -18,14 +24,10 @@ def _verify_fields(columns, validation_fields):
             tokens = required_field.split('/')
         else:
             tokens = [required_field]
-        found = False
         for token in tokens:
             if token in columns:
                 column_validation_fields.append(token)
-                found = True
                 break
-        if validation_fields[required_field][0] and not found:
-            raise Exception(f'Field {required_field} not founded in headers!')
     return column_validation_fields
 
 
@@ -468,94 +470,108 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
 def process_created(data, context):
     try:
         logging.debug(f'Started {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-        validation_fields = {'sic code': (False, 'sic_code'), 'chain name/chain id': (False, 'chain_name'),
-                             'address/address full/address full (no zip)': (False, 'address'),
-                             'city': (False, 'city'), 'state': (False, 'state'), 'zip': (False, 'zip')}
-        file_name = data['name']
-        if file_name.endswith('/'):
-            logging.info(f'Folder created {file_name}, ignored')
+        validation_fields = {'sic code': 'sic_code', 'chain name/chain id': 'chain_name',
+                             'address/address full/address full (no zip)': 'address',
+                             'city': 'city', 'state': 'state', 'zip': 'zip'}
+        file_full_name = data['name']
+        logging.info(f'File created: {file_full_name}')
+        file_full_name = file_full_name.replace(' ', '_')
+        if file_full_name.endswith('/'):
+            logging.info(f'Folder created {file_full_name}, ignored')
             return
-        logging.info(f'File: {file_name}')
+        if '/' not in file_full_name:
+            logging.warning(f'{file_full_name} does not belong to a folder')
+            return
+        destination_email = file_full_name[:file_full_name.index('/')]
+        if '@' not in destination_email:
+            logging.warning(f'{destination_email} is not a valid email')
+            return
+        file_name = file_full_name[file_full_name.rfind('/') + 1:]
+        now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if '.' in file_name:
+            file_name = file_name[:file_name.rfind('.')]
+        logging.info(f'Email: {destination_email}')
         try:
-            raw_data = pd.read_csv(f'gs://{bucket}/{file_name}', sep='\t')
+            raw_data = pd.read_csv(f'gs://{bucket}/{file_full_name}', sep='\t')
         except ValueError:
-            raw_data = pd.read_csv(f'gs://{bucket}/{file_name}', sep=',')
-
-        logging.debug(f'Data readed {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-
+            raw_data = pd.read_csv(f'gs://{bucket}/{file_full_name}', sep=',')
         raw_data.columns = map(str.lower, raw_data.columns)
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)
-        selected_columns = raw_data[column_validation_fields].rename(columns=lambda name: name.replace(' ', '_').
-                                                                     replace('(', '_').replace(')', '_'), inplace=False)
-        logging.debug(f'selected_columns started')
-        # Read all US states
-        credentials, your_project_id = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        pre_processed_data = raw_data[column_validation_fields].\
+            rename(columns=lambda name: name.replace(' ', '_').replace('(', '_').replace(')', '_'), inplace=False)
+        credentials, your_project_id = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
         bq_storage_client = bigquery_storage_v1beta1.BigQueryStorageClient(credentials=credentials)
-        df_states = (bq_client.query('SELECT state_abbr, state_name from aggdata.us_states').result().
+        df_states = (bq_client.query(query_states).result().
                      to_dataframe(bqstorage_client=bq_storage_client))
-
         # Complete columns not present in file
+        has_sic_code = "sic_code" in pre_processed_data.columns
         for key in validation_fields:
-            if not validation_fields[key][0] and validation_fields[key][1] not in selected_columns:
-                selected_columns[validation_fields[key][1]] = None
-        if 'chain_id' in selected_columns.columns:
-            df_chains = (bq_client.query('SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain').
+            if validation_fields[key] not in pre_processed_data:
+                pre_processed_data[validation_fields[key]] = None
+        logging.debug(f'has_sic_code: {has_sic_code}')
+        if 'chain_id' in pre_processed_data.columns:
+            df_chains = (bq_client.query(query_chains).
                          result().to_dataframe(bqstorage_client=bq_storage_client))
-            selected_columns['chain'] = selected_columns['chain_id'].apply(lambda chain_id:
-                                                                           _get_chain_name(chain_id, df_chains))
-        logging.debug(f'Will verify {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-        if 'address_full__no_zip_' in selected_columns.columns or 'address_full' in selected_columns.columns \
-                or 'address_full__address_state_city_zip_' in selected_columns.columns:
-            df_cities = (bq_client.query('select distinct city, state from (select '
-                                         'distinct city, state from  `aggdata.locations_no_distributors` union '
-                                         'all select distinct city, state from `aggdata.location_geofence`)').
+            pre_processed_data['chain'] = pre_processed_data['chain_id'].apply(lambda chain_id:
+                                                                               _get_chain_name(chain_id, df_chains))
+        if 'address_full__no_zip_' in pre_processed_data.columns or 'address_full' in pre_processed_data.columns \
+                or 'address_full__address_state_city_zip_' in pre_processed_data.columns:
+            df_cities = (bq_client.query(query_cities).
                          result().to_dataframe(bqstorage_client=bq_storage_client))
-            logging.debug(f'Cities readed {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+            logging.debug(f'Cities readed')
             address = None
             state = None
             city = None
             zip_code = None
-            logging.debug(f'Will processs {len(selected_columns.index)} rows {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-            for index, row in selected_columns.iterrows():
+            logging.debug(f'Will processs {len(pre_processed_data.index)} rows')
+            for index, row in pre_processed_data.iterrows():
                 if index % 500 == 0:
-                    logging.debug(f'Row {index} of {len(selected_columns.index)} {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-                if 'address_full__no_zip_' in selected_columns.columns:
+                    logging.debug(f'Row {index} of {len(pre_processed_data.index)}')
+                if 'address_full__no_zip_' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full__no_zip_'], df_states,
                                                                          df_cities, False, True)
-                if 'address_full' in selected_columns.columns:
+                if 'address_full' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full'], df_states,
                                                                          df_cities, True, False)
-                if 'address_full__address_state_city_zip_' in selected_columns.columns:
+                if 'address_full__address_state_city_zip_' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full__address_state_city_zip_'],
                                                                          df_states, df_cities, True, True)
-                selected_columns.at[index, 'address'] = address
-                selected_columns.at[index, 'state'] = state
-                selected_columns.at[index, 'city'] = city
-                selected_columns.at[index, 'zip'] = zip_code
+                pre_processed_data.at[index, 'address'] = address
+                pre_processed_data.at[index, 'state'] = state
+                pre_processed_data.at[index, 'city'] = city
+                pre_processed_data.at[index, 'zip'] = zip_code
 
-        selected_columns['zip'] = selected_columns['zip'].apply(lambda zip_code_lambda: _clean_zip(zip_code_lambda))
-        selected_columns['state'] = selected_columns['state'].apply(lambda state_lambda:
-                                                                    _get_state_code(state_lambda, df_states))
-        # selected_columns.rename(columns={'chain': 'chain_name', 'address': 'street_address'}, inplace=True)
-        selected_columns.rename(columns={'address': 'street_address'}, inplace=True)
-        selected_columns['category'] = None
-        selected_columns['lat'] = None
-        selected_columns['lon'] = None
-        if 'address_full' in selected_columns.columns:
-            selected_columns = selected_columns.drop(['address_full'], axis=1)
-        # temp_table = f'tmp{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}'
-        temp_table = f'match_multiple_sic_codes'
-        logging.info(f'Will write to table: {temp_table}')
-        selected_columns.to_gbq(f'{dataset}.{temp_table}', project_id=project, progress_bar=False)
-        logging.debug(f'will add new fields: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-        _add_clean_fields(temp_table, bq_client)
+        pre_processed_data['zip'] = pre_processed_data['zip'].apply(lambda zip_code_lambda: _clean_zip(zip_code_lambda))
+        pre_processed_data['state'] = pre_processed_data['state'].apply(lambda state_lambda:
+                                                                        _get_state_code(state_lambda, df_states))
+        pre_processed_data.rename(columns={'address': 'street_address'}, inplace=True)
+        pre_processed_data['category'] = None
+        pre_processed_data['lat'] = None
+        pre_processed_data['lon'] = None
+        if 'address_full' in pre_processed_data.columns:
+            pre_processed_data = pre_processed_data.drop(['address_full'], axis=1)
+        preprocessed_table = f'{destination_email[:destination_email.index("@")]}_{file_name}_{now}'
+        logging.info(f'Will write to table: {preprocessed_table}')
+        pre_processed_data.to_gbq(f'{dataset}.{preprocessed_table}', project_id=project, progress_bar=False)
+        _add_clean_fields(preprocessed_table, bq_client)
         # Run location_matching
-        logging.debug(f'will run location_matching: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-        destination_table = temp_table + '_processed'
+        logging.debug(f'will run location_matching')
+        destination_table = preprocessed_table + '_processed'
+        if has_sic_code:
+            _run_location_matching_sic_codes(preprocessed_table, destination_table, bq_client)
+        else:
+            _run_location_matching_chain_addr(preprocessed_table, destination_table, bq_client)
+        logging.debug(f'Processed table: {destination_table}')
+        # TODO: Add the rows that not match?
 
-        _run_location_matching_sic_codes(temp_table, destination_table, bq_client)
-        logging.debug(f'Finished {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        # Send email to agent
+
+        # Delete temp tables created, keep final matching table for 30 days
+
+        # Move file from storage to a processed folder, keep for 7 days then delete
+
+        logging.warning(f'Process finished for {file_full_name}')
     except Exception as e:
         logging.exception(f'Unexpected error {e}')
 
@@ -569,7 +585,7 @@ def process_created(data, context):
 # process_created({'name': 'dviorel/store_full_address.txt'}, None)
 # process_created({'name': 'dviorel/simple_list.txt'}, None)
 #  process_created({'name': 'dviorel/sic_code_match.txt'}, None)
-process_created({'name': 'dviorel/match_multiple_sic_codes.txt'}, None)
+process_created({'name': 'dviorel@inmarket.com/match_multiple_sic_codes.txt'}, None)
 # process_created({'name': 'dviorel/chain_id_name_both.txt'}, None) # Error encoding
 # process_created({'name': 'dviorel/multiple_chain_ids.txt'}, None) # no chain id for list
 # process_created({'name': 'dviorel/sample_1_updated.txt'}, None) OK
