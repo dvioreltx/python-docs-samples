@@ -463,7 +463,11 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
                 address = address_full[:position]
                 break
     if not found:
-        raise Exception(f'No data found for {address_full}')
+        # raise Exception(f'No data found for {address_full}')
+        address = 'N/A'
+        state = 'N/A'
+        city = 'N/A'
+        zip_code = 'N/A'
     return address, state, city, zip_code
 
 
@@ -473,18 +477,18 @@ def process_created(data, context):
         validation_fields = {'sic code': 'sic_code', 'chain name/chain id': 'chain_name',
                              'address/address full/address full (no zip)': 'address',
                              'city': 'city', 'state': 'state', 'zip': 'zip'}
-        file_full_name = data['name']
-        logging.info(f'File created: {file_full_name}')
-        file_full_name = file_full_name.replace(' ', '_')
+        original_name = data['name']
+        logging.info(f'File created: {original_name}')
+        file_full_name = original_name.replace(' ', '_').replace('-', '_')
         if file_full_name.endswith('/'):
-            logging.info(f'Folder created {file_full_name}, ignored')
+            logging.debug(f'Folder created {original_name}, ignored')
             return
         if '/' not in file_full_name:
-            logging.warning(f'{file_full_name} does not belong to a folder')
+            logging.error(f'{file_full_name} does not belong to a folder')
             return
         destination_email = file_full_name[:file_full_name.index('/')]
         if '@' not in destination_email:
-            logging.warning(f'{destination_email} is not a valid email')
+            logging.error(f'{destination_email} is not a valid email')
             return
         file_name = file_full_name[file_full_name.rfind('/') + 1:]
         now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
@@ -492,9 +496,9 @@ def process_created(data, context):
             file_name = file_name[:file_name.rfind('.')]
         logging.info(f'Email: {destination_email}')
         try:
-            raw_data = pd.read_csv(f'gs://{bucket}/{file_full_name}', sep='\t')
+            raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t')
         except ValueError:
-            raw_data = pd.read_csv(f'gs://{bucket}/{file_full_name}', sep=',')
+            raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep=',')
         raw_data.columns = map(str.lower, raw_data.columns)
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)
         pre_processed_data = raw_data[column_validation_fields].\
@@ -583,9 +587,10 @@ def process_created(data, context):
 # ###  process_created({'name': 'dviorel/store_only_zip.txt'}, None)
 # process_created({'name': 'dviorel/walmart_match_issue.txt'}, None)
 # process_created({'name': 'dviorel/store_full_address.txt'}, None)
-# process_created({'name': 'dviorel/simple_list.txt'}, None)
+# process_created({'name': 'dviorel@inmarket.com/simple_list.txt'}, None)
+process_created({'name': 'dviorel@inmarket.com/store list - full address.txt'}, None)
 #  process_created({'name': 'dviorel/sic_code_match.txt'}, None)
-process_created({'name': 'dviorel@inmarket.com/match_multiple_sic_codes.txt'}, None)
+# process_created({'name': 'dviorel@inmarket.com/match_multiple_sic_codes.txt'}, None)
 # process_created({'name': 'dviorel/chain_id_name_both.txt'}, None) # Error encoding
 # process_created({'name': 'dviorel/multiple_chain_ids.txt'}, None) # no chain id for list
 # process_created({'name': 'dviorel/sample_1_updated.txt'}, None) OK
