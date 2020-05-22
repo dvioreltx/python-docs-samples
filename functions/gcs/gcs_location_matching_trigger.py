@@ -1,14 +1,15 @@
 import datetime
-import google.auth
 import logging
+import google.auth
+import os
 import pandas as pd
-from google.cloud import bigquery
-from google.cloud import bigquery_storage_v1beta1
-from google.cloud import storage
 import smtplib
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from google.cloud import bigquery
+from google.cloud import bigquery_storage_v1beta1
+from google.cloud import storage
 from os.path import basename
 
 
@@ -25,34 +26,37 @@ query_cities = 'select distinct city, state from (select distinct city, state fr
 
 
 def _send_mail_results(destination_email, file_name, storage_client, file_result, now):
-    msg = MIMEMultipart()
-    mail_from = 'dviorel@inmarket.com'
-    msg['From'] = mail_from
-    # msg['To'] = COMMASPACE.join(send_to)
-    msg['To'] = destination_email
-    # msg['Date'] = formatdate(localtime=True)
-    msg['Subject'] = f'{file_name} matched locations '
-    text = 'Hello,\n\nPlease see your location results attached.'
-    # TODO: download csv and attach the file
+    # download csv and attach the file
     the_bucket = storage_client.bucket(bucket)
     blob = the_bucket.blob(file_result)
-    temp_local_file = f'/tmp/{now}'
+    temp_local_file = f'd:/tmp/{file_name}.csv'
     blob.download_to_filename(temp_local_file)
-    with open(temp_local_file, "rb") as fil:
-        part = MIMEApplication(
-            fil.read(),
-            Name=basename(temp_local_file)
-        )
-    # After the file is closed
-    part['Content-Disposition'] = 'attachment; filename="%s"' % basename(temp_local_file)
-    msg.attach(part)
+    _send_mail('dviorel@inmarket.com', [destination_email], f'{file_name} matched locations ',
+               'Hello,\n\nPlease see your location results attached.', [temp_local_file])
+    os.remove(temp_local_file)
 
-    msg.attach(MIMEText(text))
+
+def _send_mail(mail_from, send_to, subject, body, attachments=None):
+    assert isinstance(send_to, list)
+    msg = MIMEMultipart()
+    msg['From'] = mail_from
+    msg['To'] = ','.join(send_to)
+    msg['Subject'] = subject
+    for attachment in attachments or []:
+        with open(attachment, "rb") as fil:
+            part = MIMEApplication(
+                fil.read(),
+                Name=basename(attachment)
+            )
+        part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
+        msg.attach(part)
+
+    msg.attach(MIMEText(body))
     smtp = smtplib.SMTP('smtp.gmail.com')
     smtp.ehlo()
     smtp.starttls()
-    smtp.login(mail_from, "ftjhmrukjcdtcpft")
-    smtp.sendmail(mail_from, destination_email, msg.as_string())
+    smtp.login('dviorel@inmarket.com', 'ftjhmrukjcdtcpft')
+    smtp.sendmail(mail_from, send_to, msg.as_string())
     smtp.close()
 
 
@@ -645,20 +649,22 @@ def process_created(data, context):
             _create_ultimate_table_chain(destination_table, ultimate_table, bq_client)
         # b. Send with CSV as attachment
         destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
+        partial_destination_uri = f'results/{destination_email}/{file_name}.csv'
         logging.info(f'Writing final CSV to {destination_uri}')
         dataset_ref = bigquery.DatasetReference(project, dataset)
         table_ref = dataset_ref.table(ultimate_table)
         extract_job = bq_client.extract_table(table_ref, destination_uri)
         extract_job.result()
+        storage_client = storage.Client()
         logging.info(f'Will send email results to {destination_email}')
-        _send_mail_results(destination_email, file_name, destination_uri)
+        # TODO: The results file is getting weird positions!
+        _send_mail_results(destination_email, file_name, storage_client, partial_destination_uri, now)
 
         # Delete temp tables created, keep final matching table for 30 days
         logging.info(f'Start to delete tables')
         bq_client.delete_table(f'{dataset}.{preprocessed_table}')
         bq_client.delete_table(f'{dataset}.{destination_table}')
         # Move file from storage to a processed folder, keep for 7 days then delete
-        storage_client = storage.Client()
         source_bucket = storage_client.get_bucket(f'{bucket}')
         from_blob = source_bucket.blob(original_name)
         source_bucket.copy_blob(from_blob, source_bucket,
@@ -667,6 +673,7 @@ def process_created(data, context):
 
         logging.warning(f'Process finished for {file_full_name}')
     except Exception as e:
+        # TODO: if an error occur, it should notify by email
         logging.exception(f'Unexpected error {e}')
 
 
