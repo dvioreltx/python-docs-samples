@@ -9,6 +9,7 @@ import smtplib
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from os.path import basename
 
 
 dataset = "dannyv"
@@ -23,7 +24,7 @@ query_cities = 'select distinct city, state from (select distinct city, state fr
                'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
 
 
-def _send_mail_results(destination_email, file_name, file_result):
+def _send_mail_results(destination_email, file_name, storage_client, file_result, now):
     msg = MIMEMultipart()
     mail_from = 'dviorel@inmarket.com'
     msg['From'] = mail_from
@@ -33,6 +34,19 @@ def _send_mail_results(destination_email, file_name, file_result):
     msg['Subject'] = f'{file_name} matched locations '
     text = 'Hello,\n\nPlease see your location results attached.'
     # TODO: download csv and attach the file
+    the_bucket = storage_client.bucket(bucket)
+    blob = the_bucket.blob(file_result)
+    temp_local_file = f'/tmp/{now}'
+    blob.download_to_filename(temp_local_file)
+    with open(temp_local_file, "rb") as fil:
+        part = MIMEApplication(
+            fil.read(),
+            Name=basename(temp_local_file)
+        )
+    # After the file is closed
+    part['Content-Disposition'] = 'attachment; filename="%s"' % basename(temp_local_file)
+    msg.attach(part)
+
     msg.attach(MIMEText(text))
     smtp = smtplib.SMTP('smtp.gmail.com')
     smtp.ehlo()
