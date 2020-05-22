@@ -4,6 +4,12 @@ import logging
 import pandas as pd
 from google.cloud import bigquery
 from google.cloud import bigquery_storage_v1beta1
+from google.cloud import storage
+import smtplib
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 
 dataset = "dannyv"
 project = "cptsrewards-hrd"
@@ -15,6 +21,25 @@ query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
 query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
 query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
                'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
+
+
+def _send_mail_results(destination_email, file_name, file_result):
+    msg = MIMEMultipart()
+    mail_from = 'dviorel@inmarket.com'
+    msg['From'] = mail_from
+    # msg['To'] = COMMASPACE.join(send_to)
+    msg['To'] = destination_email
+    # msg['Date'] = formatdate(localtime=True)
+    msg['Subject'] = f'{file_name} matched locations '
+    text = 'Hello,\n\nPlease see your location results attached.'
+    # TODO: download csv and attach the file
+    msg.attach(MIMEText(text))
+    smtp = smtplib.SMTP('smtp.gmail.com')
+    smtp.ehlo()
+    smtp.starttls()
+    smtp.login(mail_from, "ftjhmrukjcdtcpft")
+    smtp.sendmail(mail_from, destination_email, msg.as_string())
+    smtp.close()
 
 
 def _verify_fields(columns, validation_fields):
@@ -91,6 +116,30 @@ def _add_clean_fields(table, bq_client):
                             from `{dataset}.{table}`  
         """
     query_job = bq_client.query(query, project=project)
+    query_job.result()
+
+
+def _create_ultimate_table_sic_codes(table, destination_table, bq_client):
+    # job_config = bigquery.QueryJobConfig(destination=destination_table)
+    job_config = bigquery.QueryJobConfig(destination=f'{project}.{dataset}.{destination_table}')
+    query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, p.clean_lg_city as city,
+                p.lg_state as state, p.lg_zip as zip, p.location_id as location_id, l.lat as lat, l.lon as lon, 
+                p.isa_match as isa_match, '' as store_id
+            from {dataset}.{table} p
+            left join aggdata.location_geofence l on p.location_id = l.location_id;
+      """
+    query_job = bq_client.query(query, project=project, job_config=job_config)
+    query_job.result()
+
+
+def _create_ultimate_table_chain(table, destination_table, bq_client):
+    job_config = bigquery.QueryJobConfig(destination=f'{project}.{dataset}.{destination_table}')
+    query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
+            p.lg_state as state, '' as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
+            p.isa_match as isa_match, p.store_id as store_id
+            from {dataset}.{table} p
+      """
+    query_job = bq_client.query(query, project=project, job_config=job_config)
     query_job.result()
 
 
@@ -483,6 +532,9 @@ def process_created(data, context):
         if file_full_name.endswith('/'):
             logging.debug(f'Folder created {original_name}, ignored')
             return
+        if 'processed/' in file_full_name or 'results/' in file_full_name:
+            logging.debug(f'Results folder {original_name}, ignored')
+            return
         if '/' not in file_full_name:
             logging.error(f'{file_full_name} does not belong to a folder')
             return
@@ -570,10 +622,34 @@ def process_created(data, context):
         # TODO: Add the rows that not match?
 
         # Send email to agent
+        # a. Writes the output to GCS
+        # a1. Create an ultimate table
+        ultimate_table = preprocessed_table + '_ultimate'
+        if has_sic_code:
+            _create_ultimate_table_sic_codes(destination_table, ultimate_table, bq_client)
+        else:
+            _create_ultimate_table_chain(destination_table, ultimate_table, bq_client)
+        # b. Send with CSV as attachment
+        destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
+        logging.info(f'Writing final CSV to {destination_uri}')
+        dataset_ref = bigquery.DatasetReference(project, dataset)
+        table_ref = dataset_ref.table(ultimate_table)
+        extract_job = bq_client.extract_table(table_ref, destination_uri)
+        extract_job.result()
+        logging.info(f'Will send email results to {destination_email}')
+        _send_mail_results(destination_email, file_name, destination_uri)
 
         # Delete temp tables created, keep final matching table for 30 days
-
+        logging.info(f'Start to delete tables')
+        bq_client.delete_table(f'{dataset}.{preprocessed_table}')
+        bq_client.delete_table(f'{dataset}.{destination_table}')
         # Move file from storage to a processed folder, keep for 7 days then delete
+        storage_client = storage.Client()
+        source_bucket = storage_client.get_bucket(f'{bucket}')
+        from_blob = source_bucket.blob(original_name)
+        source_bucket.copy_blob(from_blob, source_bucket,
+                                new_name=f'processed/{destination_email}/{now}_{file_name}.txt')
+        source_bucket.delete_blob(from_blob.name)
 
         logging.warning(f'Process finished for {file_full_name}')
     except Exception as e:
@@ -587,8 +663,8 @@ def process_created(data, context):
 # ###  process_created({'name': 'dviorel/store_only_zip.txt'}, None)
 # process_created({'name': 'dviorel/walmart_match_issue.txt'}, None)
 # process_created({'name': 'dviorel/store_full_address.txt'}, None)
-# process_created({'name': 'dviorel@inmarket.com/simple_list.txt'}, None)
-process_created({'name': 'dviorel@inmarket.com/store list - full address.txt'}, None)
+process_created({'name': 'dviorel@inmarket.com/simple_list.txt'}, None)
+# process_created({'name': 'dviorel@inmarket.com/store list - full address.txt'}, None)
 #  process_created({'name': 'dviorel/sic_code_match.txt'}, None)
 # process_created({'name': 'dviorel@inmarket.com/match_multiple_sic_codes.txt'}, None)
 # process_created({'name': 'dviorel/chain_id_name_both.txt'}, None) # Error encoding

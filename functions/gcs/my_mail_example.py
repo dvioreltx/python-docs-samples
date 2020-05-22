@@ -31,9 +31,7 @@ def send_mail(send_from, send_to, subject, text, files, server):
     smtp = smtplib.SMTP(server)
     smtp.ehlo()
     smtp.starttls()
-    # smtp.login("dviorel.tx@gmail.com", "telecomm")
     smtp.login(send_from, "ftjhmrukjcdtcpft")
-    # ftjhmrukjcdtcpft
     smtp.sendmail(send_from, send_to, msg.as_string())
     smtp.close()
 
