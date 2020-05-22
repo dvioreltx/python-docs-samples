@@ -7,6 +7,7 @@ import smtplib
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from enum import Enum
 from google.cloud import bigquery
 from google.cloud import bigquery_storage_v1beta1
 from google.cloud import storage
@@ -16,6 +17,8 @@ from os.path import basename
 dataset = "dannyv"
 project = "cptsrewards-hrd"
 bucket = 'location_matching'
+mail_from = 'dviorel@inmarket.com'
+email_error = ['dviorel@inmarket.com']
 logging.basicConfig(level=logging.DEBUG)
 
 url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
@@ -23,6 +26,12 @@ query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
 query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
 query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
                'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
+is_test = False
+
+
+class LMAlgo(Enum):
+    CHAIN = 1
+    SIC_CODE = 2
 
 
 def _send_mail_results(destination_email, file_name, storage_client, file_result, now):
@@ -137,103 +146,33 @@ def _add_clean_fields(table, bq_client):
     query_job.result()
 
 
-def _create_ultimate_table_sic_codes(table, destination_table, bq_client):
+def _create_ultimate_table(table, destination_table, bq_client, algorithm):
     # job_config = bigquery.QueryJobConfig(destination=destination_table)
     job_config = bigquery.QueryJobConfig(destination=f'{project}.{dataset}.{destination_table}')
-    query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, p.clean_lg_city as city,
+    query = None
+    if algorithm == LMAlgo.CHAIN:
+        query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
+            p.lg_state as state, '' as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
+            p.isa_match as isa_match, p.store_id as store_id
+            from {dataset}.{table} p
+      """
+    elif algorithm == LMAlgo.SIC_CODE:
+        query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, p.clean_lg_city as city,
                 p.lg_state as state, p.lg_zip as zip, p.location_id as location_id, l.lat as lat, l.lon as lon, 
                 p.isa_match as isa_match, '' as store_id
             from {dataset}.{table} p
             left join aggdata.location_geofence l on p.location_id = l.location_id;
       """
+    else:
+        raise NotImplementedError(f'{algorithm} not expected!')
     query_job = bq_client.query(query, project=project, job_config=job_config)
     query_job.result()
 
 
-def _create_ultimate_table_chain(table, destination_table, bq_client):
-    job_config = bigquery.QueryJobConfig(destination=f'{project}.{dataset}.{destination_table}')
-    query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
-            p.lg_state as state, '' as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
-            p.isa_match as isa_match, p.store_id as store_id
-            from {dataset}.{table} p
-      """
-    query_job = bq_client.query(query, project=project, job_config=job_config)
-    query_job.result()
-
-
-def _run_location_matching_sic_codes(table, destination_table, bq_client):
-    query = f""" #standardSQL
-declare level_of_accuracy string default '';
-set level_of_accuracy = 'relaxed';
-create temporary function strMatchRate(str1 STRING, str2 string, type string, accuracy string) returns FLOAT64 
-  language js as \"\"\"
-    return scoreMatchFor(str1, str2, type, accuracy)
-\"\"\"
-OPTIONS (
-library=['gs://javascript_lib/addr_functions.js']
-);
-  CREATE TABLE {dataset}.{destination_table} AS
-  with
-    sample as (
-      select *, concat(sic_code, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store 
-      from (
-        select  substr(sic_code, 0 ,4) sic_code, clean_addr, 
-          clean_city, state, zip
-        from `{dataset}.{table}`
-      )
-    ),
-    sic_code_array as (
-      select split(sic_code) sic_arr 
-      from (
-        select distinct sic_code from sample
-      )
-    ),
-    unique_sic_codes as (
-      select array(
-        select distinct regexp_replace(trim(x), ' ', '') from unnest(sic_codes) as x
-      ) sic_codes
-      from (
-        select array_concat_agg(sic_arr) sic_codes from sic_code_array 
-      )
-    ),
-    location_geofence as ( 
-      select chain_name lg_chain, lat lg_lat, lon lg_lon, addr lg_addr, 
-        city lg_city, state lg_state, substr(trim(zip),0,5) lg_zip, location_id,
-        clean_chain clean_lg_chain, clean_addr clean_lg_addr, clean_city clean_lg_city, 
-        substr(sic_code, 0 ,4) lg_sic_code
-      from `aggdata.location_geofence_cleaned` 
-      where substr(sic_code, 0 ,4) in unnest((select sic_codes from unique_sic_codes))  
-    ),
-    sample_lg_join as (
-      select distinct sic_code, lg_sic_code, * except (sic_code, lg_sic_code)
-      from sample join location_geofence on (clean_city = clean_lg_city or zip = lg_zip)
-      where regexp_contains(sic_code, lg_sic_code)
-    )
-    select *,
-      case
-        when addr_match >= 1  then 'definitely'
-        when addr_match >= .9 then 'very probably'
-        when addr_match >= .8 then 'probably'
-        when addr_match >= .7 then 'likely'
-        when addr_match >= .6 then 'possibly'
-        else                       'unlikely'
-    end isa_match
-    from (
-      select *, row_number() over (partition by store order by addr_match desc, clean_lg_addr) ar
-      from (
-        select sic_code, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, lg_state, zip, 
-          lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, store, location_id
-        from sample_lg_join 
-      )
-    ) 
-    where ar = 1; 
-      """
-    query_job = bq_client.query(query, project=project)
-    query_job.result()
-
-
-def _run_location_matching_chain_addr(table, destination_table, bq_client):
-    query = f""" CREATE TEMP FUNCTION cleanStr(str string, type string) RETURNS string
+def _run_location_matching(table, destination_table, bq_client, algorithm):
+    query = None
+    if algorithm == LMAlgo.CHAIN:
+        query = f""" CREATE TEMP FUNCTION cleanStr(str string, type string) RETURNS string
   LANGUAGE js AS "return cleanStr(str, type)";
 create temporary function strMatchRate(str1 STRING, str2 string, type string, city string) returns FLOAT64 
   language js as "return scoreMatchFor(str1, str2, type, city)";    
@@ -427,6 +366,75 @@ select row_number() over () store_id, isa_match, round(100-match_score,1) match_
 from final
 where match_rank = 1 
        """
+    elif algorithm == LMAlgo.SIC_CODE:
+        query = f""" #standardSQL
+declare level_of_accuracy string default '';
+set level_of_accuracy = 'relaxed';
+create temporary function strMatchRate(str1 STRING, str2 string, type string, accuracy string) returns FLOAT64 
+  language js as \"\"\"
+    return scoreMatchFor(str1, str2, type, accuracy)
+\"\"\"
+OPTIONS (
+library=['gs://javascript_lib/addr_functions.js']
+);
+  CREATE TABLE {dataset}.{destination_table} AS
+  with
+    sample as (
+      select *, concat(sic_code, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store 
+      from (
+        select  substr(sic_code, 0 ,4) sic_code, clean_addr, 
+          clean_city, state, zip
+        from `{dataset}.{table}`
+      )
+    ),
+    sic_code_array as (
+      select split(sic_code) sic_arr 
+      from (
+        select distinct sic_code from sample
+      )
+    ),
+    unique_sic_codes as (
+      select array(
+        select distinct regexp_replace(trim(x), ' ', '') from unnest(sic_codes) as x
+      ) sic_codes
+      from (
+        select array_concat_agg(sic_arr) sic_codes from sic_code_array 
+      )
+    ),
+    location_geofence as ( 
+      select chain_name lg_chain, lat lg_lat, lon lg_lon, addr lg_addr, 
+        city lg_city, state lg_state, substr(trim(zip),0,5) lg_zip, location_id,
+        clean_chain clean_lg_chain, clean_addr clean_lg_addr, clean_city clean_lg_city, 
+        substr(sic_code, 0 ,4) lg_sic_code
+      from `aggdata.location_geofence_cleaned` 
+      where substr(sic_code, 0 ,4) in unnest((select sic_codes from unique_sic_codes))  
+    ),
+    sample_lg_join as (
+      select distinct sic_code, lg_sic_code, * except (sic_code, lg_sic_code)
+      from sample join location_geofence on (clean_city = clean_lg_city or zip = lg_zip)
+      where regexp_contains(sic_code, lg_sic_code)
+    )
+    select *,
+      case
+        when addr_match >= 1  then 'definitely'
+        when addr_match >= .9 then 'very probably'
+        when addr_match >= .8 then 'probably'
+        when addr_match >= .7 then 'likely'
+        when addr_match >= .6 then 'possibly'
+        else                       'unlikely'
+    end isa_match
+    from (
+      select *, row_number() over (partition by store order by addr_match desc, clean_lg_addr) ar
+      from (
+        select sic_code, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, lg_state, zip, 
+          lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, store, location_id
+        from sample_lg_join 
+      )
+    ) 
+    where ar = 1; 
+      """
+    else:
+        raise NotImplementedError(f'{algorithm} not implemented!')
     query_job = bq_client.query(query, project=project)
     query_job.result()
 
@@ -556,6 +564,9 @@ def process_created(data, context):
         if '/' not in file_full_name:
             logging.error(f'{file_full_name} does not belong to a folder')
             return
+        if file_full_name.endswith('___test.txt'):
+            global is_test
+            is_test = True
         destination_email = file_full_name[:file_full_name.index('/')]
         if '@' not in destination_email:
             logging.error(f'{destination_email} is not a valid email')
@@ -632,10 +643,8 @@ def process_created(data, context):
         # Run location_matching
         logging.debug(f'will run location_matching')
         destination_table = preprocessed_table + '_processed'
-        if has_sic_code:
-            _run_location_matching_sic_codes(preprocessed_table, destination_table, bq_client)
-        else:
-            _run_location_matching_chain_addr(preprocessed_table, destination_table, bq_client)
+        _run_location_matching(preprocessed_table, destination_table, bq_client,
+                               LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
         logging.debug(f'Processed table: {destination_table}')
         # TODO: Add the rows that not match?
 
@@ -643,10 +652,8 @@ def process_created(data, context):
         # a. Writes the output to GCS
         # a1. Create an ultimate table
         ultimate_table = preprocessed_table + '_ultimate'
-        if has_sic_code:
-            _create_ultimate_table_sic_codes(destination_table, ultimate_table, bq_client)
-        else:
-            _create_ultimate_table_chain(destination_table, ultimate_table, bq_client)
+        _create_ultimate_table(destination_table, ultimate_table, bq_client,
+                               LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
         # b. Send with CSV as attachment
         destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
         partial_destination_uri = f'results/{destination_email}/{file_name}.csv'
@@ -675,7 +682,14 @@ def process_created(data, context):
     except Exception as e:
         # TODO: if an error occur, it should notify by email
         logging.exception(f'Unexpected error {e}')
+        try:
+            _send_mail(mail_from, email_error, 'location_matching tool error',
+                       f'Error processing location matching: {e}')
+        except Exception:
+            pass
 
+
+# Todo: make something to return all data if the file have some flag, for test purposes...
 
 # process_created({'name': 'dviorel/Sample_1 updated.csv'}, None)
 # process_created({'name': 'dviorel/sample_2_small_subset_nozip.csv'}, None)
