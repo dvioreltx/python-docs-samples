@@ -4,6 +4,7 @@ import google.auth
 import os
 import pandas as pd
 import smtplib
+import traceback
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -19,7 +20,11 @@ project = "cptsrewards-hrd"
 bucket = 'location_matching'
 mail_from = 'dviorel@inmarket.com'
 email_error = ['dviorel@inmarket.com']
+mail_user = 'dviorel@inmarket.com'
+mail_password = 'ftjhmrukjcdtcpft'
+mail_server = 'smtp.gmail.com'
 logging.basicConfig(level=logging.DEBUG)
+
 
 url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
 query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
@@ -27,6 +32,8 @@ query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansens
 query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
                'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
 is_test = False
+delete_intermediate_tables = True
+move_gcs_files = True
 
 
 class LMAlgo(Enum):
@@ -38,9 +45,12 @@ def _send_mail_results(destination_email, file_name, storage_client, file_result
     # download csv and attach the file
     the_bucket = storage_client.bucket(bucket)
     blob = the_bucket.blob(file_result)
-    temp_local_file = f'd:/tmp/{file_name}.csv'
+    # TODO: Change location for GCS
+    temp_local_file = f'/tmp/{file_name}.csv'
+    if not os.path.isdir(f'/tmp'):
+        temp_local_file = f'd:/tmp/{file_name}.csv'
     blob.download_to_filename(temp_local_file)
-    _send_mail('dviorel@inmarket.com', [destination_email], f'{file_name} matched locations ',
+    _send_mail(mail_from, [destination_email], f'{file_name} matched locations ',
                'Hello,\n\nPlease see your location results attached.', [temp_local_file])
     os.remove(temp_local_file)
 
@@ -61,10 +71,10 @@ def _send_mail(mail_from, send_to, subject, body, attachments=None):
         msg.attach(part)
 
     msg.attach(MIMEText(body))
-    smtp = smtplib.SMTP('smtp.gmail.com')
+    smtp = smtplib.SMTP(mail_server, port=587)
     smtp.ehlo()
     smtp.starttls()
-    smtp.login('dviorel@inmarket.com', 'ftjhmrukjcdtcpft')
+    smtp.login(mail_user, mail_password)
     smtp.sendmail(mail_from, send_to, msg.as_string())
     smtp.close()
 
@@ -146,16 +156,23 @@ def _add_clean_fields(table, bq_client):
     query_job.result()
 
 
-def _create_ultimate_table(table, destination_table, bq_client, algorithm):
+def _create_final_table(table, destination_table, bq_client, algorithm):
     # job_config = bigquery.QueryJobConfig(destination=destination_table)
     job_config = bigquery.QueryJobConfig(destination=f'{project}.{dataset}.{destination_table}')
     query = None
     if algorithm == LMAlgo.CHAIN:
-        query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
-            p.lg_state as state, '' as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
-            p.isa_match as isa_match, p.store_id as store_id
-            from {dataset}.{table} p
-      """
+        if not is_test:
+            query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
+                p.lg_state as state, '' as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
+                p.isa_match as isa_match, p.store_id as store_id
+                from {dataset}.{table} p
+            """
+        else:
+            query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
+                p.lg_state as state, '' as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
+                p.isa_match as isa_match, p.store_id as store_id
+                from {dataset}.{table} p
+            """
     elif algorithm == LMAlgo.SIC_CODE:
         query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, p.clean_lg_city as city,
                 p.lg_state as state, p.lg_zip as zip, p.location_id as location_id, l.lat as lat, l.lon as lon, 
@@ -539,6 +556,7 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
                 break
     if not found:
         # raise Exception(f'No data found for {address_full}')
+        logging.warning(f'No data found for {address_full}')
         address = 'N/A'
         state = 'N/A'
         city = 'N/A'
@@ -546,7 +564,7 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
     return address, state, city, zip_code
 
 
-def process_created(data, context):
+def process_location_matching(data, context):
     try:
         logging.debug(f'Started {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
         validation_fields = {'sic code': 'sic_code', 'chain name/chain id': 'chain_name',
@@ -642,24 +660,25 @@ def process_created(data, context):
         _add_clean_fields(preprocessed_table, bq_client)
         # Run location_matching
         logging.debug(f'will run location_matching')
-        destination_table = preprocessed_table + '_processed'
-        _run_location_matching(preprocessed_table, destination_table, bq_client,
+        location_matching_table = preprocessed_table + '_lm'
+        _run_location_matching(preprocessed_table, location_matching_table, bq_client,
                                LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
-        logging.debug(f'Processed table: {destination_table}')
+        logging.debug(f'Processed table: {location_matching_table}')
         # TODO: Add the rows that not match?
 
         # Send email to agent
         # a. Writes the output to GCS
         # a1. Create an ultimate table
-        ultimate_table = preprocessed_table + '_ultimate'
-        _create_ultimate_table(destination_table, ultimate_table, bq_client,
-                               LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
+        final_table = preprocessed_table + '_final'
+        _create_final_table(location_matching_table, final_table, bq_client,
+                            LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
+        logging.warning(f'Final table: {final_table}')
         # b. Send with CSV as attachment
         destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
         partial_destination_uri = f'results/{destination_email}/{file_name}.csv'
         logging.info(f'Writing final CSV to {destination_uri}')
         dataset_ref = bigquery.DatasetReference(project, dataset)
-        table_ref = dataset_ref.table(ultimate_table)
+        table_ref = dataset_ref.table(final_table)
         extract_job = bq_client.extract_table(table_ref, destination_uri)
         extract_job.result()
         storage_client = storage.Client()
@@ -668,25 +687,27 @@ def process_created(data, context):
         _send_mail_results(destination_email, file_name, storage_client, partial_destination_uri, now)
 
         # Delete temp tables created, keep final matching table for 30 days
-        logging.info(f'Start to delete tables')
-        bq_client.delete_table(f'{dataset}.{preprocessed_table}')
-        bq_client.delete_table(f'{dataset}.{destination_table}')
+        if delete_intermediate_tables and '___no_del_bq' not in file_full_name:
+            logging.info(f'Start to delete tables {preprocessed_table} and {location_matching_table}')
+            bq_client.delete_table(f'{dataset}.{preprocessed_table}')
+            bq_client.delete_table(f'{dataset}.{location_matching_table}')
         # Move file from storage to a processed folder, keep for 7 days then delete
-        source_bucket = storage_client.get_bucket(f'{bucket}')
-        from_blob = source_bucket.blob(original_name)
-        source_bucket.copy_blob(from_blob, source_bucket,
-                                new_name=f'processed/{destination_email}/{now}_{file_name}.txt')
-        source_bucket.delete_blob(from_blob.name)
-
+        if move_gcs_files and '___no_mv_gcs' not in file_full_name:
+            source_bucket = storage_client.get_bucket(f'{bucket}')
+            from_blob = source_bucket.blob(original_name)
+            source_bucket.copy_blob(from_blob, source_bucket,
+                                    new_name=f'processed/{destination_email}/{now}_{file_name}.txt')
+            source_bucket.delete_blob(from_blob.name)
         logging.warning(f'Process finished for {file_full_name}')
     except Exception as e:
         # TODO: if an error occur, it should notify by email
         logging.exception(f'Unexpected error {e}')
         try:
             _send_mail(mail_from, email_error, 'location_matching tool error',
-                       f'Error processing location matching: {e}')
+                       f'Error processing location matching: {traceback.format_exc()}')
         except Exception:
             pass
+        raise e
 
 
 # Todo: make something to return all data if the file have some flag, for test purposes...
@@ -698,7 +719,8 @@ def process_created(data, context):
 # ###  process_created({'name': 'dviorel/store_only_zip.txt'}, None)
 # process_created({'name': 'dviorel/walmart_match_issue.txt'}, None)
 # process_created({'name': 'dviorel/store_full_address.txt'}, None)
-process_created({'name': 'dviorel@inmarket.com/simple_list.txt'}, None)
+# process_created({'name': 'dviorel@inmarket.com/simple_list.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/simple_list.txt'}, None)
 # process_created({'name': 'dviorel@inmarket.com/store list - full address.txt'}, None)
 #  process_created({'name': 'dviorel/sic_code_match.txt'}, None)
 # process_created({'name': 'dviorel@inmarket.com/match_multiple_sic_codes.txt'}, None)
@@ -710,3 +732,5 @@ process_created({'name': 'dviorel@inmarket.com/simple_list.txt'}, None)
 # process_created({'name': 'dviorel/unclean_list.txt'}, None)
 # process_created({'name': 'dviorel/store_list_full_address.txt'}, None)
 # process_created({'name': 'dviorel/sic_code_and_chain_both.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/simple_list.txt'}, None)
+_send_mail('dviorel@inmarket.com', ['dviorel@inmarket.com'], 'My test', 'The body')
