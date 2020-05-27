@@ -513,8 +513,8 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
     tokens = address_full.split(' ')
     tokens = list(filter(None, tokens))
     length = len(tokens)
-    if length < 4:
-        raise Exception(f'Just {length} tokens founded for {address_full}, waiting 4 at less')
+    if length < 3:
+        raise Exception(f'Just {length} tokens founded for {address_full}, waiting 3 at less')
     zip_code = tokens[len(tokens) - 1] if include_zip else None
     state_position = len(tokens) - (1 if include_zip else 2) - 1 - (1 if first_state else 0)
     found, state = _verify_match_df(df_states[df_states['state_abbr'] == tokens[state_position].upper()],
