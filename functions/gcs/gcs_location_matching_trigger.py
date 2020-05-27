@@ -651,9 +651,9 @@ def process_location_matching(data, context):
             file_name = file_name[:file_name.rfind('.')]
         logging.info(f'Email: {destination_email}')
         try:
-            raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t')
+            raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='utf-8')
         except ValueError:
-            raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep=',')
+            raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t')
         raw_data.columns = map(str.lower, raw_data.columns)
         raw_data.columns = map(str.strip, raw_data.columns)
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)
@@ -765,6 +765,7 @@ def process_location_matching(data, context):
         try:
             _send_mail(mail_from, email_error, 'location_matching tool error',
                        f'Error processing location matching: {traceback.format_exc()}')
+            pass
         except Exception:
             pass
         # raise e
@@ -773,5 +774,6 @@ def process_location_matching(data, context):
 # process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
 process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/Multiple chain ids___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue___no_mv_gcs.txt'}, None)
 # _send_mail('dviorel@inmarket.com', ['dviorel@inmarket.com'], 'My test', 'The body')
