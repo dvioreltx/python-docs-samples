@@ -33,7 +33,7 @@ query_cities = 'select distinct city, state from (select distinct city, state fr
                'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
 # query_zip_state = 'select distinct zip, state from Jason.zip_code_database'
 is_test = False
-delete_intermediate_tables = True
+delete_intermediate_tables = False
 move_gcs_files = True
 
 
@@ -177,15 +177,29 @@ def _create_final_table(table, destination_table, bq_client, algorithm):
     query = None
     if algorithm == LMAlgo.CHAIN:
         if not is_test:
-            query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
-                p.lg_state as state, p.zip as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
-                p.isa_match as isa_match, p.store_id as store_id
+            query = f"""select ROW_NUMBER() OVER() as row, 
+                    case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain, 
+                    case when p.isa_match = 'unlikely' then p.addr else p.lg_addr end as address, 
+                    case when p.isa_match = 'unlikely' then p.city else p.lg_city end as city, 
+                    case when p.isa_match = 'unlikely' then p.state else p.lg_state end as state, 
+                    p.zip as zip, 
+                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id, 
+                    case when p.isa_match = 'unlikely' then null else p.lg_lat end as lat, 
+                    case when p.isa_match = 'unlikely' then null else p.lg_lon end as lon, 
+                    p.isa_match as isa_match, p.store_id as store_id
                 from {dataset}.{table} p order by row
             """
         else:
-            query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
-                p.lg_state as state, p.zip as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
-                p.isa_match as isa_match, p.store_id as store_id, 
+            query = f"""select ROW_NUMBER() OVER() as row, 
+                  case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain, 
+                  case when p.isa_match = 'unlikely' then p.addr else p.lg_addr end as address, 
+                  case when p.isa_match = 'unlikely' then p.city else p.lg_city end as city, 
+                  case when p.isa_match = 'unlikely' then p.state else p.lg_state end as state, 
+                  p.zip as zip, 
+                  case when p.isa_match = 'unlikely' then null else p.location_id end as location_id, 
+                  case when p.isa_match = 'unlikely' then null else p.lg_lat end as lat, 
+                  case when p.isa_match = 'unlikely' then null else p.lg_lon end as lon, 
+                  p.isa_match as isa_match, p.store_id as store_id, 
                 p.store_id as raw_store_id, p.isa_match as raw_isa_match, p.match_score as raw_match_score, 
                 p.grade as raw_grade, p.match_round as raw_match_round, p.chain_match as raw_chain_match,
                 p.addr_match as raw_addr_match, p.chain as raw_chain, p.lg_chain as raw_lg_chain, p.addr as raw_addr,
@@ -695,17 +709,19 @@ def process_location_matching(data, context):
         if 'address_full' in pre_processed_data.columns:
             pre_processed_data = pre_processed_data.drop(['address_full'], axis=1)
         preprocessed_table = f'{destination_email[:destination_email.index("@")]}_{file_name}_{now}'
-        logging.info(f'Will write to table: {preprocessed_table}')
+        logging.warning(f'Will write to table: {preprocessed_table}')
         pre_processed_data.to_gbq(f'{dataset}.{preprocessed_table}', project_id=project, progress_bar=False)
+        logging.warning(f'Will add clean fields: {preprocessed_table}')
         _add_clean_fields(preprocessed_table, bq_client)
         if should_add_state_from_zip:
+            logging.warning(f'Will add states from zip codes: {preprocessed_table}')
             _add_state_from_zip(preprocessed_table, bq_client)
         # Run location_matching
-        logging.debug(f'will run location_matching')
+        logging.warning(f'will run location_matching')
         location_matching_table = preprocessed_table + '_lm'
         _run_location_matching(preprocessed_table, location_matching_table, bq_client,
                                LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
-        logging.debug(f'Processed table: {location_matching_table}')
+        logging.warning(f'Processed table: {location_matching_table}')
         # TODO: Add the rows that doesn't match?
 
         # Send email to agent
