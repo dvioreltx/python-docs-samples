@@ -178,13 +178,13 @@ def _create_final_table(table, destination_table, bq_client, algorithm):
     if algorithm == LMAlgo.CHAIN:
         if not is_test:
             query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
-                p.lg_state as state, '' as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
+                p.lg_state as state, p.zip as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
                 p.isa_match as isa_match, p.store_id as store_id
                 from {dataset}.{table} p order by row
             """
         else:
             query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
-                p.lg_state as state, '' as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
+                p.lg_state as state, p.zip as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
                 p.isa_match as isa_match, p.store_id as store_id, 
                 p.store_id as raw_store_id, p.isa_match as raw_isa_match, p.match_score as raw_match_score, 
                 p.grade as raw_grade, p.match_round as raw_match_round, p.chain_match as raw_chain_match,
@@ -324,7 +324,7 @@ combined_score_ranks as (
   from combined_match_scores 
 ),
 match_liklihood as (
-  select chain_match, addr_match, match_score, match_rank, chain, 
+  select chain_match, addr_match, match_score, match_rank, chain, zip, 
     lg_chain, addr, lg_addr, city, lg_city, state, lg_state, lg_lat, lg_lon, location_id, store, 
     case
       when match_score <= 0  then 'A+'
@@ -386,7 +386,7 @@ combined_score_ranks2 as (
   from combined_match_scores2 
 ),
 match_liklihood2 as (
-  select chain_match, addr_match, match_score, match_rank, chain, 
+  select chain_match, addr_match, match_score, match_rank, chain, zip, 
     lg_chain, addr, lg_addr, city, lg_city, state, lg_state, lg_lat, lg_lon, location_id, store, 
     case
       when match_score <= 0  then 'A+'
