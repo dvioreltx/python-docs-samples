@@ -94,6 +94,8 @@ def _verify_fields(columns, validation_fields):
 
 
 def _clean_zip(zip_code):
+    if zip_code is None:
+        return None
     zip_code = str(zip_code)
     if zip_code is None or len(zip_code) == 0:
         return zip_code
@@ -767,6 +769,7 @@ def process_location_matching(data, context):
         # raise e
 
 
-process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue___no_mv_gcs.txt'}, None)
 # _send_mail('dviorel@inmarket.com', ['dviorel@inmarket.com'], 'My test', 'The body')
