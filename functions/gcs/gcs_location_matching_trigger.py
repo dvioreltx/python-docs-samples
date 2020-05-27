@@ -31,6 +31,7 @@ query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
 query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
 query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
                'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
+# query_zip_state = 'select distinct zip, state from Jason.zip_code_database'
 is_test = False
 delete_intermediate_tables = True
 move_gcs_files = True
@@ -45,7 +46,6 @@ def _send_mail_results(destination_email, file_name, storage_client, file_result
     # download csv and attach the file
     the_bucket = storage_client.bucket(bucket)
     blob = the_bucket.blob(file_result)
-    # TODO: Change location for GCS
     temp_local_file = f'/tmp/{file_name}.csv'
     if not os.path.isdir(f'/tmp'):
         temp_local_file = f'd:/tmp/{file_name}.csv'
@@ -156,6 +156,21 @@ def _add_clean_fields(table, bq_client):
     query_job.result()
 
 
+def _add_state_from_zip(table, bq_client):
+    query = f"""create or replace table {dataset}.{table} as 
+            select a.* except(state), z.state
+            from {dataset}.{table} a
+            left join (
+                select *, ROW_NUMBER() OVER(partition by zip) as row_no from(
+                select distinct state, zip from aggdata.location_geofence)
+            )z 
+            on a.zip = z.zip
+            where z.row_no = 1
+        """
+    query_job = bq_client.query(query, project=project)
+    query_job.result()
+
+
 def _create_final_table(table, destination_table, bq_client, algorithm):
     # job_config = bigquery.QueryJobConfig(destination=destination_table)
     job_config = bigquery.QueryJobConfig(destination=f'{project}.{dataset}.{destination_table}')
@@ -165,21 +180,44 @@ def _create_final_table(table, destination_table, bq_client, algorithm):
             query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
                 p.lg_state as state, '' as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
                 p.isa_match as isa_match, p.store_id as store_id
-                from {dataset}.{table} p
+                from {dataset}.{table} p order by row
             """
         else:
             query = f"""select ROW_NUMBER() OVER() as row, p.lg_chain as chain, p.lg_addr as address, p.lg_city as city, 
                 p.lg_state as state, '' as zip, p.location_id as location_id, p.lg_lat as lat, p.lg_lon as lon, 
-                p.isa_match as isa_match, p.store_id as store_id
-                from {dataset}.{table} p
+                p.isa_match as isa_match, p.store_id as store_id, 
+                p.store_id as raw_store_id, p.isa_match as raw_isa_match, p.match_score as raw_match_score, 
+                p.grade as raw_grade, p.match_round as raw_match_round, p.chain_match as raw_chain_match,
+                p.addr_match as raw_addr_match, p.chain as raw_chain, p.lg_chain as raw_lg_chain, p.addr as raw_addr,
+                p.lg_addr as raw_lg_addr, p.city as raw_city, p.lg_city as raw_lg_city, p.state as raw_state, 
+                p.lg_state as raw_lg_state, p.lg_lat as raw_lg_lat, p.lg_lon as raw_lg_lon, 
+                p.location_id as raw_location_id, p.store as raw_store, p.clean_chain as raw_clean_chain, 
+                p.clean_lg_chain as raw_clean_lg_chain, p.clean_addr as raw_clean_addr, 
+                p.clean_lg_addr as raw_clean_lg_addr
+                from {dataset}.{table} p  order by row
             """
     elif algorithm == LMAlgo.SIC_CODE:
-        query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, p.clean_lg_city as city,
-                p.lg_state as state, p.lg_zip as zip, p.location_id as location_id, l.lat as lat, l.lon as lon, 
-                p.isa_match as isa_match, '' as store_id
-            from {dataset}.{table} p
-            left join aggdata.location_geofence l on p.location_id = l.location_id;
-      """
+        if not is_test:
+            query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, 
+                    p.clean_lg_city as city, p.lg_state as state, p.lg_zip as zip, p.location_id as location_id,
+                    l.lat as lat, l.lon as lon, p.isa_match as isa_match, '' as store_id
+                from {dataset}.{table} p
+                left join aggdata.location_geofence l on p.location_id = l.location_id
+                 order by row
+            """
+        else:
+            query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, 
+                    p.clean_lg_city as city, p.lg_state as state, p.lg_zip as zip, p.location_id as location_id, 
+                    l.lat as lat, l.lon as lon, p.isa_match as isa_match, '' as store_id, 
+                    p.sic_code as raw_sic_code, p.lg_sic_code as raw_lg_sic_code, p.clean_addr as raw_clean_addr,
+                    p.clean_lg_addr as raw_clean_lg_addr, p.clean_city as raw_clean_city, 
+                    p.clean_lg_city as raw_clean_lg_city, p.state as raw_state, p.lg_state as raw_lg_state,
+                    p.zip as raw_zip, p.lg_zip as raw_lg_zip, p.addr_match as raw_addr_match, p.store as raw_store,
+                    p.location_id as raw_location_id, p.ar as raw_ar, p.isa_match as raw_isa_match
+                from {dataset}.{table} p
+                left join aggdata.location_geofence l on p.location_id = l.location_id
+                 order by row
+            """
     else:
         raise NotImplementedError(f'{algorithm} not expected!')
     query_job = bq_client.query(query, project=project, job_config=job_config)
@@ -584,6 +622,7 @@ def process_location_matching(data, context):
             return
         if file_full_name.endswith('___test.txt'):
             global is_test
+            logging.warning(f'This is a test petition')
             is_test = True
         destination_email = file_full_name[:file_full_name.index('/')]
         if '@' not in destination_email:
@@ -608,7 +647,8 @@ def process_location_matching(data, context):
         df_states = (bq_client.query(query_states).result().
                      to_dataframe(bqstorage_client=bq_storage_client))
         # Complete columns not present in file
-        has_sic_code = "sic_code" in pre_processed_data.columns
+        should_add_state_from_zip = 'state' not in pre_processed_data.columns and 'zip' in pre_processed_data.columns
+        has_sic_code = 'sic_code' in pre_processed_data.columns
         for key in validation_fields:
             if validation_fields[key] not in pre_processed_data:
                 pre_processed_data[validation_fields[key]] = None
@@ -658,17 +698,19 @@ def process_location_matching(data, context):
         logging.info(f'Will write to table: {preprocessed_table}')
         pre_processed_data.to_gbq(f'{dataset}.{preprocessed_table}', project_id=project, progress_bar=False)
         _add_clean_fields(preprocessed_table, bq_client)
+        if should_add_state_from_zip:
+            _add_state_from_zip(preprocessed_table, bq_client)
         # Run location_matching
         logging.debug(f'will run location_matching')
         location_matching_table = preprocessed_table + '_lm'
         _run_location_matching(preprocessed_table, location_matching_table, bq_client,
                                LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
         logging.debug(f'Processed table: {location_matching_table}')
-        # TODO: Add the rows that not match?
+        # TODO: Add the rows that doesn't match?
 
         # Send email to agent
         # a. Writes the output to GCS
-        # a1. Create an ultimate table
+        # a1. Create the  table
         final_table = preprocessed_table + '_final'
         _create_final_table(location_matching_table, final_table, bq_client,
                             LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
@@ -683,7 +725,6 @@ def process_location_matching(data, context):
         extract_job.result()
         storage_client = storage.Client()
         logging.info(f'Will send email results to {destination_email}')
-        # TODO: The results file is getting weird positions!
         _send_mail_results(destination_email, file_name, storage_client, partial_destination_uri, now)
 
         # Delete temp tables created, keep final matching table for 30 days
@@ -700,14 +741,13 @@ def process_location_matching(data, context):
             source_bucket.delete_blob(from_blob.name)
         logging.warning(f'Process finished for {file_full_name}')
     except Exception as e:
-        # TODO: if an error occur, it should notify by email
         logging.exception(f'Unexpected error {e}')
         try:
             _send_mail(mail_from, email_error, 'location_matching tool error',
                        f'Error processing location matching: {traceback.format_exc()}')
         except Exception:
             pass
-        raise e
+        # raise e
 
 
 # Todo: make something to return all data if the file have some flag, for test purposes...
@@ -732,5 +772,6 @@ def process_location_matching(data, context):
 # process_created({'name': 'dviorel/unclean_list.txt'}, None)
 # process_created({'name': 'dviorel/store_list_full_address.txt'}, None)
 # process_created({'name': 'dviorel/sic_code_and_chain_both.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/simple_list.txt'}, None)
-_send_mail('dviorel@inmarket.com', ['dviorel@inmarket.com'], 'My test', 'The body')
+# process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs__test.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/Mixed_chains_no_state___no_mv_gcs.txt'}, None)
+# _send_mail('dviorel@inmarket.com', ['dviorel@inmarket.com'], 'My test', 'The body')
