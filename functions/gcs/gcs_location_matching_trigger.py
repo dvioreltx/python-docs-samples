@@ -251,13 +251,14 @@ create temporary function strMatchRate(str1 STRING, str2 string, type string, ci
  returns float64
  language js as \"\"\"
 var rawScore = 50*(1-chain_match) + 50*(1-addr_match);
-var score =
-(chain_match == 0 || addr_match == 0)  ? 100 :
-chain_match >   1 && addr_match  >= .5 ? Math.min(5,  rawScore) :
-chain_match >= .8 && addr_match  >= .5 ? Math.min(15, rawScore) :
-addr_match  >= .8 && chain_match >= .5 ? Math.min(15, rawScore) :
-chain_match >= .3 && addr_match  >= .9 ? Math.min(20, rawScore) :
-rawScore;
+var score = 
+      (chain_match == 0)                     ? 100 :
+      chain_match >   1 && addr_match  >= .5 ? Math.min(5,  rawScore) :
+      chain_match >= .8 && addr_match  >= .5 ? Math.min(15, rawScore) :
+      addr_match  >= .8 && chain_match >= .5 ? Math.min(15, rawScore) :   
+      chain_match >= .3 && addr_match  >= .9 ? Math.min(20, rawScore) :
+      chain_match > 1 ?                        Math.min(20,  rawScore) :
+      rawScore;
 return score;
 \"\"\"
 OPTIONS (
@@ -770,6 +771,7 @@ def process_location_matching(data, context):
 
 
 # process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue___no_mv_gcs.txt'}, None)
 # _send_mail('dviorel@inmarket.com', ['dviorel@inmarket.com'], 'My test', 'The body')
