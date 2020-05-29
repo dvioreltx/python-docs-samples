@@ -3,6 +3,7 @@ import logging
 import google.auth
 import os
 import pandas as pd
+import pytz
 import smtplib
 import traceback
 from email.mime.application import MIMEApplication
@@ -33,7 +34,6 @@ query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
 query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
 query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
                'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
-# query_zip_state = 'select distinct zip, state from Jason.zip_code_database'
 is_test = False
 delete_intermediate_tables = False
 move_gcs_files = True
@@ -146,6 +146,14 @@ def _verify_match(value_1_return, value_2):
     return False, None
 
 
+def _set_table_expiration(dataset, table_name, expiration_days, bq_client):
+    expiration = datetime.datetime.now(pytz.timezone('America/Los_Angeles')) + datetime.timedelta(days=expiration_days)
+    table_ref = bq_client.dataset(dataset).table(table_name)
+    table = bq_client.get_table(table_ref)
+    table.expires = expiration
+    bq_client.update_table(table, ["expires"])
+
+
 def _add_clean_fields(table, bq_client):
     query = f""" CREATE TEMP FUNCTION cleanStr(str string, type string) RETURNS string
                               LANGUAGE js AS \"\"\"
@@ -177,9 +185,8 @@ def _add_state_from_zip(table, bq_client):
 
 
 def _create_final_table(table, destination_table, bq_client, algorithm):
-    # job_config = bigquery.QueryJobConfig(destination=destination_table)
     job_config = bigquery.QueryJobConfig(destination=f'{project}.{dataset_final}.{destination_table}')
-    job_config.write_disposition = job.WriteDisposition.WRITE_APPEND
+    job_config.write_disposition = job.WriteDisposition.WRITE_TRUNCATE
     query = None
     if algorithm == LMAlgo.CHAIN:
         if not is_test:
@@ -242,6 +249,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm):
         raise NotImplementedError(f'{algorithm} not expected!')
     query_job = bq_client.query(query, project=project, job_config=job_config)
     query_job.result()
+    _set_table_expiration(dataset_final, destination_table, 30, bq_client)
 
 
 def _run_location_matching(table, destination_table, bq_client, algorithm):
@@ -661,12 +669,17 @@ def process_location_matching(data, context):
         credentials, your_project_id = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
         bq_storage_client = bigquery_storage_v1beta1.BigQueryStorageClient(credentials=credentials)
-        logging.warning(f'Will write war table: {file_name}')
+        logging.warning(f'Will write raw table: {file_name}')
         raw_data.columns = map(str.lower, raw_data.columns)
         raw_data.columns = map(str.strip, raw_data.columns)
+        # raw_data.columns = [c.replace(' ', '_').replace('/', '_').replace('#', '_').replace('?', '_').replace('!', '_')
+                            # for c in raw_data.columns]
         try:
+            # raw_store_data = raw_data.copy(deep=True)
+            # raw_store_data.to_gbq(f'{dataset_original}.{file_name}', project_id=project, progress_bar=False,
             raw_data.to_gbq(f'{dataset_original}.{file_name}', project_id=project, progress_bar=False,
                             if_exists='replace')
+            _set_table_expiration(dataset_original, file_name, 7, bq_client)
         except Exception as p:
             logging.exception(f'Error writing to {dataset_original}.{file_name}: {traceback.format_exc()}')
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)

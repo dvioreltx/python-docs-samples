@@ -6,3 +6,4 @@ google-auth==1.14.3
 google-cloud-bigquery-storage==0.8.0
 pandas==1.0.3
 pandas-gbq==0.13.1
+pytz==2020.1
