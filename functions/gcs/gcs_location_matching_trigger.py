@@ -26,6 +26,8 @@ email_error = ['dviorel@inmarket.com']
 mail_user = 'dviorel@inmarket.com'
 mail_password = 'ftjhmrukjcdtcpft'
 mail_server = 'smtp.gmail.com'
+expiration_days_original_table = 7
+expiration_days_results_table = 30
 logging.basicConfig(level=logging.DEBUG)
 
 
@@ -34,9 +36,10 @@ query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
 query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
 query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
                'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
-is_test = False
+
 delete_intermediate_tables = False
-move_gcs_files = True
+delete_gcs_files = False
+enable_trigger = True
 
 
 class LMAlgo(Enum):
@@ -55,6 +58,7 @@ def _send_mail_results(destination_email, file_name, storage_client, file_result
     _send_mail(mail_from, [destination_email], f'{file_name} matched locations ',
                'Hello,\n\nPlease see your location results attached.', [temp_local_file])
     os.remove(temp_local_file)
+    the_bucket.delete_blob(file_result)
 
 
 def _send_mail(mail_from, send_to, subject, body, attachments=None):
@@ -99,12 +103,16 @@ def _clean_zip(zip_code):
     if zip_code is None:
         return None
     zip_code = str(zip_code)
-    if zip_code is None or len(zip_code) == 0:
+    if '.' in zip_code:
+        zip_code = zip_code[:zip_code.index('.')]
+    if zip_code == 'nan':
+        return None
+    if len(zip_code) == 0:
         return zip_code
     if len(zip_code) > 5:
         return zip_code[:5]
     if len(zip_code) < 5:
-        return zip_code.ljust(5, '0')
+        return zip_code.rjust(5, '0')
     return zip_code
 
 
@@ -184,12 +192,12 @@ def _add_state_from_zip(table, bq_client):
     query_job.result()
 
 
-def _create_final_table(table, destination_table, bq_client, algorithm):
+def _create_final_table(table, destination_table, bq_client, algorithm, full_result):
     job_config = bigquery.QueryJobConfig(destination=f'{project}.{dataset_final}.{destination_table}')
     job_config.write_disposition = job.WriteDisposition.WRITE_TRUNCATE
     query = None
     if algorithm == LMAlgo.CHAIN:
-        if not is_test:
+        if not full_result:
             query = f"""select ROW_NUMBER() OVER() as row, 
                     case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain, 
                     case when p.isa_match = 'unlikely' then p.addr else p.lg_addr end as address, 
@@ -224,7 +232,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm):
                 from {dataset_original}.{table} p  order by row
             """
     elif algorithm == LMAlgo.SIC_CODE:
-        if not is_test:
+        if not full_result:
             query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, 
                     p.clean_lg_city as city, p.lg_state as state, p.lg_zip as zip, p.location_id as location_id,
                     l.lat as lat, l.lon as lon, p.isa_match as isa_match, '' as store_id
@@ -249,7 +257,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm):
         raise NotImplementedError(f'{algorithm} not expected!')
     query_job = bq_client.query(query, project=project, job_config=job_config)
     query_job.result()
-    _set_table_expiration(dataset_final, destination_table, 30, bq_client)
+    _set_table_expiration(dataset_final, destination_table, expiration_days_results_table, bq_client)
 
 
 def _run_location_matching(table, destination_table, bq_client, algorithm):
@@ -639,6 +647,9 @@ def process_location_matching(data, context):
                              'city': 'city', 'state': 'state', 'zip': 'zip'}
         original_name = data['name']
         logging.info(f'File created: {original_name}')
+        if not enable_trigger:
+            logging.warning(f'Trigger disabled!')
+            return
         file_full_name = original_name.replace(' ', '_').replace('-', '_')
         if file_full_name.endswith('/'):
             logging.debug(f'Folder created {original_name}, ignored')
@@ -649,10 +660,10 @@ def process_location_matching(data, context):
         if '/' not in file_full_name:
             logging.error(f'{file_full_name} does not belong to a folder')
             return
+        full_result = False
         if file_full_name.endswith('___test.txt'):
-            global is_test
-            logging.warning(f'This is a test petition')
-            is_test = True
+            logging.warning(f'This is a test petition so we will return full data')
+            full_result = True
         destination_email = file_full_name[:file_full_name.index('/')]
         if '@' not in destination_email:
             logging.error(f'{destination_email} is not a valid email')
@@ -672,16 +683,6 @@ def process_location_matching(data, context):
         logging.warning(f'Will write raw table: {file_name}')
         raw_data.columns = map(str.lower, raw_data.columns)
         raw_data.columns = map(str.strip, raw_data.columns)
-        # raw_data.columns = [c.replace(' ', '_').replace('/', '_').replace('#', '_').replace('?', '_').replace('!', '_')
-                            # for c in raw_data.columns]
-        try:
-            # raw_store_data = raw_data.copy(deep=True)
-            # raw_store_data.to_gbq(f'{dataset_original}.{file_name}', project_id=project, progress_bar=False,
-            raw_data.to_gbq(f'{dataset_original}.{file_name}', project_id=project, progress_bar=False,
-                            if_exists='replace')
-            _set_table_expiration(dataset_original, file_name, 7, bq_client)
-        except Exception as p:
-            logging.exception(f'Error writing to {dataset_original}.{file_name}: {traceback.format_exc()}')
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)
         pre_processed_data = raw_data[column_validation_fields].\
             rename(columns=lambda name: name.replace(' ', '_').replace('(', '_').replace(')', '_'), inplace=False)
@@ -736,10 +737,11 @@ def process_location_matching(data, context):
         if 'address_full' in pre_processed_data.columns:
             pre_processed_data = pre_processed_data.drop(['address_full'], axis=1)
         # preprocessed_table = f'{destination_email[:destination_email.index("@")]}_{file_name}_{now}'
-        preprocessed_table = f'{file_name}_pp'
+        preprocessed_table = file_name
         logging.warning(f'Will write to table: {preprocessed_table}')
         pre_processed_data.to_gbq(f'{dataset_original}.{preprocessed_table}', project_id=project, progress_bar=False,
                                   if_exists='replace')
+        _set_table_expiration(dataset_original, preprocessed_table, expiration_days_original_table, bq_client)
         logging.warning(f'Will add clean fields: {preprocessed_table}')
         _add_clean_fields(preprocessed_table, bq_client)
         if should_add_state_from_zip:
@@ -760,7 +762,7 @@ def process_location_matching(data, context):
         # final_table = preprocessed_table + '_final'
         final_table = file_name
         _create_final_table(location_matching_table, final_table, bq_client,
-                            LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
+                            LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, full_result)
         logging.warning(f'Final table: {final_table}')
         # b. Send with CSV as attachment
         destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
@@ -773,14 +775,14 @@ def process_location_matching(data, context):
         storage_client = storage.Client()
         logging.info(f'Will send email results to {destination_email}')
         _send_mail_results(destination_email, file_name, storage_client, partial_destination_uri, now)
-
-        # Delete temp tables created, keep final matching table for 30 days
         if delete_intermediate_tables and '___no_del_bq' not in file_full_name:
             logging.info(f'Start to delete tables {preprocessed_table} and {location_matching_table}')
             bq_client.delete_table(f'{dataset_original}.{preprocessed_table}')
             bq_client.delete_table(f'{dataset_original}.{location_matching_table}')
-        # Move file from storage to a processed folder, keep for 7 days then delete
-        if move_gcs_files and '___no_mv_gcs' not in file_full_name:
+        if delete_gcs_files and '___no_mv_gcs' not in file_full_name:
+            source_bucket = storage_client.get_bucket(f'{bucket}')
+            source_bucket.delete_blob(original_name)
+        elif '___no_mv_gcs' not in file_full_name:
             source_bucket = storage_client.get_bucket(f'{bucket}')
             from_blob = source_bucket.blob(original_name)
             source_bucket.copy_blob(from_blob, source_bucket,
@@ -798,7 +800,8 @@ def process_location_matching(data, context):
         # raise e
 
 
-process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Multiple chain ids___no_mv_gcs.txt'}, None)
