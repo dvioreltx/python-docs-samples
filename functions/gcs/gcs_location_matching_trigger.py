@@ -436,7 +436,7 @@ library=['gs://javascript_lib/addr_functions.js']
     sample as (
       select *, concat(sic_code, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store 
       from (
-        select  substr(sic_code, 0 ,4) sic_code, clean_addr, 
+        select  substr(cast(sic_code as string), 0 ,4) sic_code, clean_addr, 
           clean_city, state, zip
         from `{dataset_original}.{table}`
       )
@@ -642,7 +642,7 @@ def process_location_matching(data, context):
         credentials, your_project_id = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
         bq_storage_client = bigquery_storage_v1beta1.BigQueryStorageClient(credentials=credentials)
-        logging.warning(f'Will write raw table: {file_name}')
+        # logging.warning(f'Will write raw table: {file_name}')
         raw_data.columns = map(str.lower, raw_data.columns)
         raw_data.columns = map(str.strip, raw_data.columns)
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)
@@ -699,7 +699,7 @@ def process_location_matching(data, context):
         if 'address_full' in pre_processed_data.columns:
             pre_processed_data = pre_processed_data.drop(['address_full'], axis=1)
         # preprocessed_table = f'{destination_email[:destination_email.index("@")]}_{file_name}_{now}'
-        preprocessed_table = file_name
+        preprocessed_table = file_name.lower().replace(' ', '_')
         logging.warning(f'Will write to table: {preprocessed_table}')
         pre_processed_data.to_gbq(f'{dataset_original}.{preprocessed_table}', project_id=project, progress_bar=False,
                                   if_exists='replace')
@@ -739,7 +739,6 @@ def process_location_matching(data, context):
         _send_mail_results(destination_email, file_name, storage_client, partial_destination_uri, now)
         if delete_intermediate_tables and '___no_del_bq' not in file_full_name:
             logging.info(f'Start to delete tables {preprocessed_table} and {location_matching_table}')
-            bq_client.delete_table(f'{dataset_original}.{preprocessed_table}')
             bq_client.delete_table(f'{dataset_original}.{location_matching_table}')
         if delete_gcs_files and '___no_mv_gcs' not in file_full_name:
             source_bucket = storage_client.get_bucket(f'{bucket}')
