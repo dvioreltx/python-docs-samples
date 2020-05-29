@@ -37,7 +37,7 @@ query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansens
 query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
                'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
 
-delete_intermediate_tables = False
+delete_intermediate_tables = True
 delete_gcs_files = False
 enable_trigger = True
 
@@ -327,7 +327,8 @@ isa_match 	   string,
 match_score    float64,	
 grade          string,	
 chain_match    float64,	
-addr_match     float64,	
+addr_match     float64,
+zip          string,	
 chain          string,	
 lg_chain       string,	
 addr           string,
@@ -381,7 +382,7 @@ with
    from match_scores 
  ),
  best_matches as (
-   select chain_match, addr_match, match_score, match_rank, chain, 
+   select chain_match, addr_match, match_score, match_rank, zip, chain, 
      lg_chain, addr, lg_addr, city, lg_city, state, lg_state, lg_lat, lg_lon, 
      safe_cast(location_id as string) location_id, 
      store, 
@@ -416,8 +417,8 @@ end;
 ###    ENTER OUTPUT FILE HERE     ###
 #####################################
 create or replace table 
-{dataset_final}.{table} 
-as select * from stage1 
+{dataset_original}.{destination_table} 
+as select * from stage1 order by store_id 
      """
     elif algorithm == LMAlgo.SIC_CODE:
         query = f""" #standardSQL
@@ -761,8 +762,8 @@ def process_location_matching(data, context):
         # raise e
 
 
-# process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Multiple chain ids___no_mv_gcs.txt'}, None)
