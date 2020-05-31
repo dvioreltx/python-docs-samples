@@ -1,6 +1,5 @@
 import datetime
 import logging
-
 import google.auth
 import os
 import pandas as pd
@@ -18,29 +17,30 @@ from google.cloud import storage
 from os.path import basename
 
 
-dataset_original = "location_matching_file"
-dataset_final = "location_matching_match"
-project = "cptsrewards-hrd"
+delete_intermediate_tables = True
+delete_gcs_files = False
+enable_trigger = True
+send_email_on_error = True
+data_set_original = "location_matching_file"
+data_set_final = "location_matching_match"
 bucket = 'location_matching'
 mail_from = 'dviorel@inmarket.com'
 email_error = ['dviorel@inmarket.com']
 mail_user = 'dviorel@inmarket.com'
 mail_password = 'ftjhmrukjcdtcpft'
-mail_server = 'smtp.gmail.com'
 expiration_days_original_table = 7
 expiration_days_results_table = 30
+
 logging.basicConfig(level=logging.DEBUG)
 
-
+fail_on_error = False
+mail_server = 'smtp.gmail.com'
+project = "cptsrewards-hrd"
 url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
 query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
 query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
 query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
                'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
-
-delete_intermediate_tables = True
-delete_gcs_files = False
-enable_trigger = True
 
 
 class LMAlgo(Enum):
@@ -49,7 +49,6 @@ class LMAlgo(Enum):
 
 
 def _send_mail_results(destination_email, file_name, storage_client, file_result, now):
-    # download csv and attach the file
     the_bucket = storage_client.bucket(bucket)
     blob = the_bucket.blob(file_result)
     temp_local_file = f'/tmp/{file_name}.csv'
@@ -169,19 +168,19 @@ def _add_clean_fields(table, bq_client):
                                 return cleanStr(str, type)
                             \"\"\"
                             OPTIONS (library=['gs://javascript_lib/addr_functions.js']);
-                            create or replace table {dataset_original}.{table} as 
+                            create or replace table {data_set_original}.{table} as 
                             select *, cleanstr(chain_name, 'chain') clean_chain, 
                             cleanstr(street_address, 'addr') clean_addr, cleanstr(city, 'city') clean_city
-                            from `{dataset_original}.{table}`  
+                            from `{data_set_original}.{table}`  
         """
     query_job = bq_client.query(query, project=project)
     query_job.result()
 
 
 def _add_state_from_zip(table, bq_client):
-    query = f"""create or replace table {dataset_original}.{table} as 
+    query = f"""create or replace table {data_set_original}.{table} as 
             select a.* except(state), z.state
-            from {dataset_original}.{table} a
+            from {data_set_original}.{table} a
             left join (
                 select *, ROW_NUMBER() OVER(partition by zip) as row_no from(
                 select distinct state, zip from aggdata.location_geofence)
@@ -194,7 +193,7 @@ def _add_state_from_zip(table, bq_client):
 
 
 def _create_final_table(table, destination_table, bq_client, algorithm, full_result):
-    job_config = bigquery.QueryJobConfig(destination=f'{project}.{dataset_final}.{destination_table}')
+    job_config = bigquery.QueryJobConfig(destination=f'{project}.{data_set_final}.{destination_table}')
     job_config.write_disposition = job.WriteDisposition.WRITE_TRUNCATE
     query = None
     if algorithm == LMAlgo.CHAIN:
@@ -209,7 +208,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
                     case when p.isa_match = 'unlikely' then null else p.lg_lat end as lat, 
                     case when p.isa_match = 'unlikely' then null else p.lg_lon end as lon, 
                     p.isa_match as isa_match, p.store_id as store_id
-                from {dataset_original}.{table} p order by row
+                from {data_set_original}.{table} p order by row
             """
         else:
             query = f"""select ROW_NUMBER() OVER() as row, 
@@ -230,14 +229,14 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
                 p.location_id as raw_location_id, p.store as raw_store, p.clean_chain as raw_clean_chain, 
                 p.clean_lg_chain as raw_clean_lg_chain, p.clean_addr as raw_clean_addr, 
                 p.clean_lg_addr as raw_clean_lg_addr
-                from {dataset_original}.{table} p  order by row
+                from {data_set_original}.{table} p  order by row
             """
     elif algorithm == LMAlgo.SIC_CODE:
         if not full_result:
             query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, 
                     p.clean_lg_city as city, p.lg_state as state, p.lg_zip as zip, p.location_id as location_id,
                     l.lat as lat, l.lon as lon, p.isa_match as isa_match, '' as store_id
-                from {dataset_original}.{table} p
+                from {data_set_original}.{table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
                  order by row
             """
@@ -250,7 +249,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
                     p.clean_lg_city as raw_clean_lg_city, p.state as raw_state, p.lg_state as raw_lg_state,
                     p.zip as raw_zip, p.lg_zip as raw_lg_zip, p.addr_match as raw_addr_match, p.store as raw_store,
                     p.location_id as raw_location_id, p.ar as raw_ar, p.isa_match as raw_isa_match
-                from {dataset_original}.{table} p
+                from {data_set_original}.{table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
                  order by row
             """
@@ -258,7 +257,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
         raise NotImplementedError(f'{algorithm} not expected!')
     query_job = bq_client.query(query, project=project, job_config=job_config)
     query_job.result()
-    _set_table_expiration(dataset_final, destination_table, expiration_days_results_table, bq_client)
+    _set_table_expiration(data_set_final, destination_table, expiration_days_results_table, bq_client)
 
 
 def _run_location_matching(table, destination_table, bq_client, algorithm):
@@ -305,7 +304,7 @@ from (
     #####################################
     ###     ENTER INPUT FILE HERE     ###
     #####################################
-    from `{dataset_original}.{table}`  
+    from `{data_set_original}.{table}`  
   ) a 
   left join stateAbbrs b on lower(a.state) = lower(state_name)
   where chain is not null
@@ -418,7 +417,7 @@ end;
 ###    ENTER OUTPUT FILE HERE     ###
 #####################################
 create or replace table 
-{dataset_original}.{destination_table} 
+{data_set_original}.{destination_table} 
 as select * from stage1 order by store_id 
      """
     elif algorithm == LMAlgo.SIC_CODE:
@@ -432,14 +431,14 @@ create temporary function strMatchRate(str1 STRING, str2 string, type string, ac
 OPTIONS (
 library=['gs://javascript_lib/addr_functions.js']
 );
-  CREATE OR REPLACE TABLE {dataset_original}.{destination_table} AS
+  CREATE OR REPLACE TABLE {data_set_original}.{destination_table} AS
   with
     sample as (
       select *, concat(sic_code, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store 
       from (
         select  substr(cast(sic_code as string), 0 ,4) sic_code, clean_addr, 
           clean_city, state, zip
-        from `{dataset_original}.{table}`
+        from `{data_set_original}.{table}`
       )
     ),
     sic_code_array as (
@@ -502,7 +501,7 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
     if length < 3:
         raise Exception(f'Just {length} tokens founded for {address_full}, waiting 3 at less')
     zip_code = tokens[len(tokens) - 1] if include_zip else None
-    state_position = len(tokens) - (1 if include_zip else 2) - 1 - (1 if first_state else 0)
+    state_position = len(tokens) - (1 if include_zip else 0) - 1 - (1 if first_state else 0)
     found, state = _verify_match_df(df_states[df_states['state_abbr'] == tokens[state_position].upper()],
                                     tokens[state_position])
     if not found and first_state:
@@ -521,15 +520,15 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
     if not found:
         for index, row in df_states.iterrows():
             state_position = len(tokens) - (1 if include_zip else 2) - 1
-            state, found = _verify_match(tokens[state_position], row['state_abbr'])
+            found, state = _verify_match(tokens[state_position], row['state_abbr'])
             if not found and first_state:
-                state, found = _verify_match(tokens[state_position - 1], row['state_abbr'])
+                found, state = _verify_match(tokens[state_position - 1], row['state_abbr'])
             if not found:
-                state, found = _verify_match(tokens[state_position], row['state_name'])
+                found, state = _verify_match(tokens[state_position], row['state_name'])
             if not found and first_state:
-                state, found = _verify_match(tokens[state_position - 1], row['state_name'])
+                found, state = _verify_match(tokens[state_position - 1], row['state_name'])
             if not found:
-                state, found = _verify_match(tokens[state_position - 1] + ' ' + tokens[state_position],
+                found, state = _verify_match(tokens[state_position - 1] + ' ' + tokens[state_position],
                                              row['state_abbr'])
             if not found:
                 if row['state_name'].lower() in address_full.lower():
@@ -544,7 +543,7 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
                 city = address_full[address_full.rfind(state) + len(state):address_full.rfind(' ')]
             else:
                 city = address_full[address_full.rfind(state) + len(state):]
-            address = address_full[:address_full.rfind(city)]
+            address = address_full[:address_full.rfind(state)]
             state = _get_state_code(state, df_states)
         else:
             # try city with the previous token
@@ -702,9 +701,9 @@ def process_location_matching(data, context):
         # preprocessed_table = f'{destination_email[:destination_email.index("@")]}_{file_name}_{now}'
         preprocessed_table = file_name.lower().replace(' ', '_')
         logging.warning(f'Will write to table: {preprocessed_table}')
-        pre_processed_data.to_gbq(f'{dataset_original}.{preprocessed_table}', project_id=project, progress_bar=False,
+        pre_processed_data.to_gbq(f'{data_set_original}.{preprocessed_table}', project_id=project, progress_bar=False,
                                   if_exists='replace')
-        _set_table_expiration(dataset_original, preprocessed_table, expiration_days_original_table, bq_client)
+        _set_table_expiration(data_set_original, preprocessed_table, expiration_days_original_table, bq_client)
         logging.warning(f'Will add clean fields: {preprocessed_table}')
         _add_clean_fields(preprocessed_table, bq_client)
         if should_add_state_from_zip:
@@ -712,7 +711,6 @@ def process_location_matching(data, context):
             _add_state_from_zip(preprocessed_table, bq_client)
         # Run location_matching
         logging.warning(f'will run location_matching')
-        # location_matching_table = preprocessed_table + '_lm'
         location_matching_table = f'{file_name}_lm'
         _run_location_matching(preprocessed_table, location_matching_table, bq_client,
                                LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
@@ -720,27 +718,23 @@ def process_location_matching(data, context):
         # TODO: Add the rows that doesn't match
 
         # Send email to agent
-        # a. Writes the output to GCS
-        # a1. Create the  table
-        # final_table = preprocessed_table + '_final'
         final_table = file_name
         _create_final_table(location_matching_table, final_table, bq_client,
                             LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, full_result)
         logging.warning(f'Final table: {final_table}')
-        # b. Send with CSV as attachment
         destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
         partial_destination_uri = f'results/{destination_email}/{file_name}.csv'
         logging.info(f'Writing final CSV to {destination_uri}')
-        dataset_ref = bigquery.DatasetReference(project, dataset_final)
-        table_ref = dataset_ref.table(final_table)
+        data_set_ref = bigquery.DatasetReference(project, data_set_final)
+        table_ref = data_set_ref.table(final_table)
         extract_job = bq_client.extract_table(table_ref, destination_uri)
         extract_job.result()
         storage_client = storage.Client()
         logging.info(f'Will send email results to {destination_email}')
         _send_mail_results(destination_email, file_name, storage_client, partial_destination_uri, now)
         if delete_intermediate_tables and '___no_del_bq' not in file_full_name:
-            logging.info(f'Start to delete tables {preprocessed_table} and {location_matching_table}')
-            bq_client.delete_table(f'{dataset_original}.{location_matching_table}')
+            logging.info(f'Start to delete table {location_matching_table}')
+            bq_client.delete_table(f'{data_set_original}.{location_matching_table}')
         if delete_gcs_files and '___no_mv_gcs' not in file_full_name:
             source_bucket = storage_client.get_bucket(f'{bucket}')
             source_bucket.delete_blob(original_name)
@@ -753,17 +747,21 @@ def process_location_matching(data, context):
         logging.warning(f'Process finished for {file_full_name}')
     except Exception as e:
         logging.exception(f'Unexpected error {e}')
-        try:
-            _send_mail(mail_from, email_error, 'location_matching tool error',
-                       f'Error processing location matching: {traceback.format_exc()}')
-            pass
-        except Exception:
-            pass
-        # raise e
+        if send_email_on_error:
+            try:
+                _send_mail(mail_from, email_error, 'location_matching tool error',
+                           f'Error processing location matching: {traceback.format_exc()}')
+            except Exception:
+                pass
+        if fail_on_error:
+            raise e
 
 
 # process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/chain id _ name both___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/chain id _ name both___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated_good___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
