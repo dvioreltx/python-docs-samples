@@ -48,14 +48,14 @@ class LMAlgo(Enum):
     SIC_CODE = 2
 
 
-def _send_mail_results(destination_email, file_name, storage_client, file_result, now):
+def _send_mail_results(destination_email, original_name, file_name, storage_client, file_result, now):
     the_bucket = storage_client.bucket(bucket)
     blob = the_bucket.blob(file_result)
     temp_local_file = f'/tmp/{file_name}.csv'
     if not os.path.isdir(f'/tmp'):
         temp_local_file = f'd:/tmp/{file_name}.csv'
     blob.download_to_filename(temp_local_file)
-    _send_mail(mail_from, [destination_email], f'{file_name} matched locations ',
+    _send_mail(mail_from, [destination_email], f'{original_name} matched locations ',
                'Hello,\n\nPlease see your location results attached.', [temp_local_file])
     os.remove(temp_local_file)
     the_bucket.delete_blob(file_result)
@@ -610,7 +610,7 @@ def process_location_matching(data, context):
         original_name = data['name']
         logging.info(f'File created: {original_name}')
         if not enable_trigger:
-            logging.warning(f'Trigger disabled!')
+            logging.warning(f'Trigger disabled! ...{original_name}')
             return
         file_full_name = original_name.replace(' ', '_').replace('-', '_')
         if file_full_name.endswith('/'):
@@ -624,17 +624,17 @@ def process_location_matching(data, context):
             return
         full_result = False
         if file_full_name.endswith('___test.txt'):
-            logging.warning(f'This is a test petition so we will return full data')
+            logging.warning(f'This is a test petition so we will return full data ...{original_name}')
             full_result = True
         destination_email = file_full_name[:file_full_name.index('/')]
         if '@' not in destination_email:
-            logging.error(f'{destination_email} is not a valid email')
+            logging.error(f'{destination_email} is not a valid email ...{original_name}')
             return
         file_name = file_full_name[file_full_name.rfind('/') + 1:]
         now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         if '.' in file_name:
             file_name = file_name[:file_name.rfind('.')]
-        logging.info(f'Email: {destination_email}')
+        logging.info(f'Email: {destination_email} ...{original_name}')
         try:
             raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='utf-8')
         except ValueError:
@@ -656,25 +656,26 @@ def process_location_matching(data, context):
         for key in validation_fields:
             if validation_fields[key] not in pre_processed_data:
                 pre_processed_data[validation_fields[key]] = None
-        logging.debug(f'has_sic_code: {has_sic_code}')
+        logging.debug(f'has_sic_code: {has_sic_code} ...{original_name}')
         if 'chain_id' in pre_processed_data.columns:
             df_chains = (bq_client.query(query_chains).
                          result().to_dataframe(bqstorage_client=bq_storage_client))
             pre_processed_data['chain'] = pre_processed_data['chain_id'].apply(lambda chain_id:
                                                                                _get_chain_name(chain_id, df_chains))
+
         if 'address_full__no_zip_' in pre_processed_data.columns or 'address_full' in pre_processed_data.columns \
                 or 'address_full__address_state_city_zip_' in pre_processed_data.columns:
             df_cities = (bq_client.query(query_cities).
                          result().to_dataframe(bqstorage_client=bq_storage_client))
-            logging.debug(f'Cities readed')
+            logging.debug(f'Cities readed ...{original_name}')
             address = None
             state = None
             city = None
             zip_code = None
-            logging.debug(f'Will processs {len(pre_processed_data.index)} rows')
+            logging.debug(f'Will processs {len(pre_processed_data.index)} rows ...{original_name}')
             for index, row in pre_processed_data.iterrows():
                 if index % 500 == 0:
-                    logging.debug(f'Row {index} of {len(pre_processed_data.index)}')
+                    logging.debug(f'Row {index} of {len(pre_processed_data.index)} ...{original_name}')
                 if 'address_full__no_zip_' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full__no_zip_'], df_states,
                                                                          df_cities, False, True)
@@ -700,40 +701,40 @@ def process_location_matching(data, context):
             pre_processed_data = pre_processed_data.drop(['address_full'], axis=1)
         # preprocessed_table = f'{destination_email[:destination_email.index("@")]}_{file_name}_{now}'
         preprocessed_table = file_name.lower().replace(' ', '_')
-        logging.warning(f'Will write to table: {preprocessed_table}')
+        logging.warning(f'Will write to table: {preprocessed_table} ...{original_name}')
         pre_processed_data.to_gbq(f'{data_set_original}.{preprocessed_table}', project_id=project, progress_bar=False,
                                   if_exists='replace')
         _set_table_expiration(data_set_original, preprocessed_table, expiration_days_original_table, bq_client)
-        logging.warning(f'Will add clean fields: {preprocessed_table}')
+        logging.warning(f'Will add clean fields: {preprocessed_table} ...{original_name}')
         _add_clean_fields(preprocessed_table, bq_client)
         if should_add_state_from_zip:
-            logging.warning(f'Will add states from zip codes: {preprocessed_table}')
+            logging.warning(f'Will add states from zip codes: {preprocessed_table} ...{original_name}')
             _add_state_from_zip(preprocessed_table, bq_client)
         # Run location_matching
-        logging.warning(f'will run location_matching')
+        logging.warning(f'will run location_matching ...{original_name}')
         location_matching_table = f'{file_name}_lm'
         _run_location_matching(preprocessed_table, location_matching_table, bq_client,
                                LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
-        logging.warning(f'Location matching table: {location_matching_table}')
+        logging.warning(f'Location matching table: {location_matching_table} ...{original_name}')
         # TODO: Add the rows that doesn't match
 
         # Send email to agent
         final_table = file_name
         _create_final_table(location_matching_table, final_table, bq_client,
                             LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, full_result)
-        logging.warning(f'Final table: {final_table}')
+        logging.warning(f'Final table: {final_table} ...{original_name}')
         destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
         partial_destination_uri = f'results/{destination_email}/{file_name}.csv'
-        logging.info(f'Writing final CSV to {destination_uri}')
+        logging.info(f'Writing final CSV to {destination_uri} ...{original_name}')
         data_set_ref = bigquery.DatasetReference(project, data_set_final)
         table_ref = data_set_ref.table(final_table)
         extract_job = bq_client.extract_table(table_ref, destination_uri)
         extract_job.result()
         storage_client = storage.Client()
-        logging.info(f'Will send email results to {destination_email}')
-        _send_mail_results(destination_email, file_name, storage_client, partial_destination_uri, now)
+        logging.info(f'Will send email results to {destination_email} ...{original_name}')
+        _send_mail_results(destination_email, original_name, file_name, storage_client, partial_destination_uri, now)
         if delete_intermediate_tables and '___no_del_bq' not in file_full_name:
-            logging.info(f'Start to delete table {location_matching_table}')
+            logging.info(f'Start to delete table {location_matching_table} ...{original_name}')
             bq_client.delete_table(f'{data_set_original}.{location_matching_table}')
         if delete_gcs_files and '___no_mv_gcs' not in file_full_name:
             source_bucket = storage_client.get_bucket(f'{bucket}')
@@ -761,7 +762,9 @@ def process_location_matching(data, context):
 # process_location_matching({'name': 'dviorel@inmarket.com/chain id _ name both___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated___no_mv_gcs.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated_good___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated_good___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
