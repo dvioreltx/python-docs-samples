@@ -17,7 +17,7 @@ from google.cloud import storage
 from os.path import basename
 
 
-delete_intermediate_tables = True
+delete_intermediate_tables = False
 delete_gcs_files = False
 enable_trigger = True
 send_email_on_error = True
@@ -81,7 +81,6 @@ def _send_mail(mail_from, send_to, subject, body, attachments=None):
 
     msg.attach(MIMEText(body))
     smtp = smtplib.SMTP(mail_server, port=587)
-    smtp.ehlo()
     smtp.starttls()
     smtp.login(mail_user, mail_password)
     smtp.sendmail(mail_from, send_to, msg.as_string())
