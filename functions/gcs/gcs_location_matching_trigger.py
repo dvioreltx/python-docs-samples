@@ -55,7 +55,10 @@ def _send_mail_results(destination_email, original_name, file_name, storage_clie
     if not os.path.isdir(f'/tmp'):
         temp_local_file = f'd:/tmp/{file_name}.csv'
     blob.download_to_filename(temp_local_file)
-    _send_mail(mail_from, [destination_email], f'{original_name} matched locations ',
+    file_name_email = original_name[original_name.index('/') + 1:]
+    if '.' in file_name_email:
+        file_name_email = file_name_email[:file_name_email.index('.')]
+    _send_mail(mail_from, [destination_email], f'{file_name_email} matched locations ',
                'Hello,\n\nPlease see your location results attached.', [temp_local_file])
     os.remove(temp_local_file)
     the_bucket.delete_blob(file_result)
@@ -652,7 +655,9 @@ def process_location_matching(data, context):
                      to_dataframe(bqstorage_client=bq_storage_client))
         # Complete columns not present in file
         should_add_state_from_zip = 'state' not in pre_processed_data.columns and 'zip' in pre_processed_data.columns
+        has_chain = 'chain_id' in pre_processed_data.columns or 'chain_name' in pre_processed_data.columns
         has_sic_code = 'sic_code' in pre_processed_data.columns
+        has_sic_code = has_sic_code and not has_chain
         for key in validation_fields:
             if validation_fields[key] not in pre_processed_data:
                 pre_processed_data[validation_fields[key]] = None
