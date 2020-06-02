@@ -207,10 +207,18 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
     if algorithm == LMAlgo.CHAIN:
         if not full_result:
             query = f"""select ROW_NUMBER() OVER() as row, 
-                    case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain, 
-                    case when p.isa_match = 'unlikely' then p.addr else p.lg_addr end as address, 
-                    case when p.isa_match = 'unlikely' then p.city else p.lg_city end as city, 
-                    case when p.isa_match = 'unlikely' then p.state else p.lg_state end as state, 
+                    -- case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain,
+                    p.chain as provided_chain,
+                    -- case when p.isa_match = 'unlikely' then p.addr else p.lg_addr end as address, 
+                    p.addr as provided_address,
+                    -- case when p.isa_match = 'unlikely' then p.city else p.lg_city end as city, 
+                    p.city as provided_city,
+                    -- case when p.isa_match = 'unlikely' then p.state else p.lg_state end as state, 
+                    p.state as provided_state,
+                    case when p.isa_match = 'unlikely' then null else p.lg_chain end as matched_chain,
+                    case when p.isa_match = 'unlikely' then null else p.lg_addr end as matched_address,  
+                    case when p.isa_match = 'unlikely' then null else p.lg_city end as matched_city,
+                    case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
                     p.zip as zip, 
                     case when p.isa_match = 'unlikely' then null else p.location_id end as location_id, 
                     case when p.isa_match = 'unlikely' then null else p.lg_lat end as lat, 
@@ -220,10 +228,18 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
             """
         else:
             query = f"""select ROW_NUMBER() OVER() as row, 
-                  case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain, 
-                  case when p.isa_match = 'unlikely' then p.addr else p.lg_addr end as address, 
-                  case when p.isa_match = 'unlikely' then p.city else p.lg_city end as city, 
-                  case when p.isa_match = 'unlikely' then p.state else p.lg_state end as state, 
+                  -- case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain,
+                  p.chain as provided_chain,
+                  -- case when p.isa_match = 'unlikely' then p.addr else p.lg_addr end as address, 
+                  p.addr as provided_address,
+                  -- case when p.isa_match = 'unlikely' then p.city else p.lg_city end as city, 
+                  p.city as provided_city,
+                  -- case when p.isa_match = 'unlikely' then p.state else p.lg_state end as state, 
+                  p.state as provided_state,
+                  case when p.isa_match = 'unlikely' then null else p.lg_chain end as matched_chain,
+                  case when p.isa_match = 'unlikely' then null else p.lg_addr end as matched_address,  
+                  case when p.isa_match = 'unlikely' then null else p.lg_city end as matched_city,
+                  case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state, 
                   p.zip as zip, 
                   case when p.isa_match = 'unlikely' then null else p.location_id end as location_id, 
                   case when p.isa_match = 'unlikely' then null else p.lg_lat end as lat, 
@@ -241,17 +257,38 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
             """
     elif algorithm == LMAlgo.SIC_CODE:
         if not full_result:
-            query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, 
-                    p.clean_lg_city as city, p.lg_state as state, p.lg_zip as zip, p.location_id as location_id,
-                    l.lat as lat, l.lon as lon, p.isa_match as isa_match, '' as store_id
+            query = f"""select ROW_NUMBER() OVER() as row, '' as provided_chain, '' as matched_chain,
+                    p.clean_addr as provided_address,
+                    p.clean_city as provided_city,
+                    p.state as provided_state,
+                    -- p.zip as provided_zip, 
+                    case when p.isa_match = 'unlikely' then null else p.clean_lg_addr end as matched_address,
+                    case when p.isa_match = 'unlikely' then null else p.clean_lg_city end as matched_city,
+                    case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
+                    case when p.isa_match = 'unlikely' then null else p.lg_zip end as zip, 
+                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id,
+                    case when p.isa_match = 'unlikely' then null else l.lat end as lat,
+                    case when p.isa_match = 'unlikely' then null else l.lon end as lon,
+                    p.isa_match as isa_match, 
+                    '' as store_id
                 from {data_set_original}.{table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
                  order by row
             """
         else:
-            query = f"""select ROW_NUMBER() OVER() as row, '' as chain, p.clean_lg_addr as address, 
-                    p.clean_lg_city as city, p.lg_state as state, p.lg_zip as zip, p.location_id as location_id, 
-                    l.lat as lat, l.lon as lon, p.isa_match as isa_match, '' as store_id, 
+            query = f"""select ROW_NUMBER() OVER() as row, '' as provided_chain, '' as matched_chain,
+                    p.clean_addr as provided_address,
+                    p.clean_city as provided_city,
+                    p.state as provided_state,
+                    -- p.zip as provided_zip, 
+                    case when p.isa_match = 'unlikely' then null else p.clean_lg_addr end as matched_address,
+                    case when p.isa_match = 'unlikely' then null else p.clean_lg_city end as matched_city,
+                    case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
+                    case when p.isa_match = 'unlikely' then null else p.lg_zip end as zip, 
+                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id,
+                    case when p.isa_match = 'unlikely' then null else l.lat end as lat,
+                    case when p.isa_match = 'unlikely' then null else l.lon end as lon, 
+                    p.isa_match as isa_match, '' as store_id, 
                     p.sic_code as raw_sic_code, p.lg_sic_code as raw_lg_sic_code, p.clean_addr as raw_clean_addr,
                     p.clean_lg_addr as raw_clean_lg_addr, p.clean_city as raw_clean_city, 
                     p.clean_lg_city as raw_clean_lg_city, p.state as raw_state, p.lg_state as raw_lg_state,
@@ -776,8 +813,9 @@ def process_location_matching(data, context):
 # process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated_good___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row___no_mv_gcs.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/simple list 2.with.point!$%^&_-+=-, ___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/simple list 2.with.point!$%^&_-+=-, ___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/sic code match___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Multiple chain ids___no_mv_gcs.txt'}, None)
