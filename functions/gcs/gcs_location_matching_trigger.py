@@ -48,6 +48,12 @@ class LMAlgo(Enum):
     SIC_CODE = 2
 
 
+def _sanitize_file_name(file_name):
+    for c in ' -!@#$%^&*()=+{}[];:"\'?.,':
+        file_name = file_name.replace(c, '_')
+    return file_name
+
+
 def _send_mail_results(destination_email, original_name, file_name, storage_client, file_result, now):
     the_bucket = storage_client.bucket(bucket)
     blob = the_bucket.blob(file_result)
@@ -636,6 +642,7 @@ def process_location_matching(data, context):
         now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         if '.' in file_name:
             file_name = file_name[:file_name.rfind('.')]
+        file_name = _sanitize_file_name(file_name)
         logging.info(f'Email: {destination_email} ...{original_name}')
         try:
             raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='utf-8')
@@ -704,7 +711,7 @@ def process_location_matching(data, context):
         if 'address_full' in pre_processed_data.columns:
             pre_processed_data = pre_processed_data.drop(['address_full'], axis=1)
         # preprocessed_table = f'{destination_email[:destination_email.index("@")]}_{file_name}_{now}'
-        preprocessed_table = file_name.lower().replace(' ', '_')
+        preprocessed_table = file_name.lower()
         logging.warning(f'Will write to table: {preprocessed_table} ...{original_name}')
         pre_processed_data.to_gbq(f'{data_set_original}.{preprocessed_table}', project_id=project, progress_bar=False,
                                   if_exists='replace')
@@ -768,7 +775,8 @@ def process_location_matching(data, context):
 # process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated_good___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids___no_mv_gcs.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/simple list 2.with.point!$%^&_-+=-, ___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
