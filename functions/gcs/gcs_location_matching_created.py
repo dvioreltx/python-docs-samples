@@ -53,6 +53,11 @@ def pre_process_file(**context):
         logging.warning(f'log: pre_process_file type of dag_run conf name: {dag_run.conf["name"]}')
     except Exception as e:
         logging.error(f'Error b: {e}')
+    try:
+        logging.warning(f'log: pre_process_file table to process: {dag_run.conf["table"]}')
+    except Exception as e:
+        logging.error(f'Error c: {e}')
+    logging.warning('Finishedddd')
     # logging.warning(f'log: pre_process_file with configur: {configur}')
     # file_name = configur['name']
     # logging.warning(f'log: pre_process_file with file_name: {file_name}')
@@ -75,13 +80,6 @@ def delete_temp_data():
 
 
 # define tasks
-
-print_gcs_info = bash_operator.BashOperator(
-    task_id='print_gcs_info',
-    bash_command='echo {{ dag_run.conf }}',
-    dag=dag)
-
-
 pre_process_file = PythonOperator(
     task_id='pre_process_file',
     provide_context=True,
@@ -110,7 +108,6 @@ delete_temp_data = PythonOperator(
 )
 
 # Setting up Dependencies
-pre_process_file.set_upstream(print_gcs_info)
 execute_location_matching.set_upstream(pre_process_file)
 prepare_results_table.set_upstream(execute_location_matching)
 send_email_results.set_upstream(prepare_results_table)
