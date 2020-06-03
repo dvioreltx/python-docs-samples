@@ -25,4 +25,12 @@ with airflow.DAG(
     # Print the dag_run's configuration, which includes information about the
     # Cloud Storage object change.
     print_gcs_info = bash_operator.BashOperator(
-        task_id='print_gcs_info', bash_command='echo {{ dag_run.conf }}')
+        task_id='print_gcs_info', bash_command='sleep 30 && echo {{ dag_run.conf }}')
+
+# Read the file in a Pandas Dataframe, preprocess, save table to BigQuery, push the table_name to a Xcom variable
+#    I think we also need the has_sic_code variable.
+# Execute the Location Matching Algorithm,
+# Create the table name
+# Send email with results
+# Delete temp tables and intermediate results
+# Maybe airflow variables to determine log level and drop/delete policy?

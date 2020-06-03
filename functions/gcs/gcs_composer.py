@@ -1,5 +1,6 @@
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
+import logging
 import requests
 
 
@@ -40,6 +41,7 @@ def trigger_dag(data, context=None):
     # Make a POST request to IAP which then Triggers the DAG
     make_iap_request(
         webserver_url, client_id, method='POST', json={"conf": data})
+    logging.warning(f'Finished')
 
 
 # This code is copied from
@@ -61,18 +63,21 @@ def make_iap_request(url, client_id, method='GET', **kwargs):
     # Set the default timeout, if missing
     if 'timeout' not in kwargs:
         kwargs['timeout'] = 90
-
+    logging.warning(f'Data: {kwargs}')
     # Obtain an OpenID Connect (OIDC) token from metadata server or using service
     # account.
+    logging.warning(f'Will ge token')
     google_open_id_connect_token = id_token.fetch_id_token(Request(), client_id)
-
+    logging.warning(f'Token obtained')
     # Fetch the Identity-Aware Proxy-protected URL, including an
     # Authorization header containing "Bearer " followed by a
     # Google-issued OpenID Connect token for the service account.
+    logging.warning(f'Will call request')
     resp = requests.request(
         method, url,
         headers={'Authorization': 'Bearer {}'.format(
             google_open_id_connect_token)}, **kwargs)
+    logging.warning(f'It get response')
     if resp.status_code == 403:
         raise Exception('Service account does not have permission to '
                         'access the IAP-protected application.')
