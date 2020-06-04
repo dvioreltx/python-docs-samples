@@ -29,9 +29,9 @@ delete_gcs_files = False
 enable_trigger = True
 send_email_on_error = True
 data_set_original = "location_matching_file"
-# TODO: Volver a poner locatin_matching
-# bucket = 'location_matching'
-bucket = 'dannyv'
+
+bucket = 'location_matching'  # TODOne: Volver a poner locatin_matching
+# bucket = 'dannyv'
 mail_from = 'dviorel@inmarket.com'
 email_error = ['dviorel@inmarket.com']
 mail_user = 'dviorel@inmarket.com'

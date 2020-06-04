@@ -33,7 +33,7 @@ default_args = {
 dag = DAG(
     'gcs_location_matching_created',
     default_args=default_args,
-    description = 'Location Matching Tool',
+    description='Location Matching Tool',
     # Not scheduled, trigger only
     schedule_interval=None
 )
@@ -44,7 +44,7 @@ delete_intermediate_tables = False
 send_email_on_error = True
 data_set_original = "location_matching_file"
 data_set_final = "location_matching_match"
-bucket = 'location_matching' # TODOne: Volver a poner este bucket
+bucket = 'location_matching'  # TODOne: Volver a poner este bucket
 # bucket = 'dannyv'
 mail_from = 'dviorel@inmarket.com'
 email_error = ['dviorel@inmarket.com']
@@ -578,6 +578,3 @@ delete_temp_data = PythonOperator(
 prepare_results_table.set_upstream(execute_location_matching)
 send_email_results.set_upstream(prepare_results_table)
 delete_temp_data.set_upstream(send_email_results)
-
-# Delete temp tables and intermediate results
-# Maybe airflow variables to determine log level and drop/delete policy?
