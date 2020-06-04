@@ -460,6 +460,11 @@ def process_location_matching(data, context):
                          + dag_name + '/dag_runs')
         # Make a POST request to IAP which then Triggers the DAG
         data['table'] = preprocessed_table
+        data['destination_email'] = destination_email
+        data['has_sic_code'] = has_sic_code
+        data['has_chain'] = has_chain
+        data['original_file_name'] = original_name
+        data['full_result'] = full_result
         _make_iap_request(webserver_url, client_id, method='POST', json={"conf": data})
         storage_client = storage.Client()
         if delete_gcs_files and '___no_mv_gcs' not in file_full_name:

@@ -1,8 +1,10 @@
 import datetime
 
 import logging
+import os
 from enum import Enum
 import traceback
+import smtplib
 import pytz
 from airflow import DAG
 from google.cloud.bigquery import job
@@ -14,6 +16,9 @@ from google.cloud import bigquery
 from google.cloud import storage
 from google.oauth2 import service_account
 from os.path import basename
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 # Config variables
 
@@ -65,6 +70,65 @@ url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
 class LMAlgo(Enum):
     CHAIN = 1
     SIC_CODE = 2
+
+
+def _send_mail(mail_from, send_to, subject, body, attachments=None):
+    assert isinstance(send_to, list)
+    msg = MIMEMultipart()
+    msg['From'] = mail_from
+    msg['To'] = ','.join(send_to)
+    msg['Subject'] = subject
+    for attachment in attachments or []:
+        with open(attachment, "rb") as fil:
+            part = MIMEApplication(
+                fil.read(),
+                Name=basename(attachment)
+            )
+        part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
+        msg.attach(part)
+
+    msg.attach(MIMEText(body))
+    smtp = smtplib.SMTP(mail_server, port=587)
+    smtp.starttls()
+    smtp.login(mail_user, mail_password)
+    smtp.sendmail(mail_from, send_to, msg.as_string())
+    smtp.close()
+
+
+def send_email_results(**context):
+    logging.warning('log: send_email_results 01')
+    preprocessed_table = context['dag_run'].conf['table']
+    file_name = preprocessed_table
+    original_file_name = context['dag_run'].conf['original_file_name']
+    destination_email = context['dag_run'].conf['destination_email']
+    credentials, _ = google.auth.default(scopes=[url_auth_gcp])
+    bq_client = bigquery.Client(project=project, credentials=credentials)
+    destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
+    logging.warning(f'log: send_email_results 02 desturi {destination_uri}')
+    logging.info(f'Writing final CSV to {destination_uri} ...{original_file_name}')
+    results_table = preprocessed_table + '_result'
+    # data_set_ref = bigquery.DatasetReference(project, data_set_final)
+    data_set_ref = bigquery.DatasetReference(project, data_set_original)
+    table_ref = data_set_ref.table(results_table)
+    extract_job = bq_client.extract_table(table_ref, destination_uri)
+    extract_job.result()
+    logging.warning(f'log: send_email_results 03 downloaded in {destination_uri}')
+    storage_client = storage.Client()
+    the_bucket = storage_client.bucket(bucket)
+    file_result = f'results/{destination_email}/{preprocessed_table}.csv'
+    blob = the_bucket.blob(file_result)
+    temp_local_file = f'/tmp/{file_name}.csv'
+    logging.warning(f'log: send_email_results 04 will download in {temp_local_file}')
+    blob.download_to_filename(temp_local_file)
+    logging.warning(f'log: send_email_results 05 downloaded in {temp_local_file}')
+    file_name_email = original_file_name[original_file_name.index('/') + 1:]
+    if '.' in file_name_email:
+        file_name_email = file_name_email[:file_name_email.index('.')]
+    _send_mail(mail_from, [destination_email], f'{file_name_email} matched locations ',
+               'Hello,\n\nPlease see your location results attached.', [temp_local_file])
+    logging.warning(f'log: send_email_results 06 email sended')
+    os.remove(temp_local_file)
+    the_bucket.delete_blob(file_result)
 
 
 def _set_table_expiration(dataset, table_name, expiration_days, bq_client):
@@ -444,7 +508,7 @@ def execute_location_matching(**context):
         bq_client = bigquery.Client(project=project, credentials=credentials)
         logging.warning('log: bq_client obtained, will run location_matching')
         _run_location_matching(preprocessed_table, location_matching_table, bq_client, LMAlgo.CHAIN)
-        logging.warning(f'log: locatin_matching ended in table {location_matching_table}')
+        logging.warning(f'log: location_matching ended in table {location_matching_table}')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
 
@@ -461,10 +525,6 @@ def prepare_results_table(**context):
         logging.warning('log: prepare_results ended')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
-
-
-def send_email_results(**context):
-    logging.warning('log: send_email_results')
 
 
 def delete_temp_data(**context):
