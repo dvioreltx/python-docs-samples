@@ -397,7 +397,7 @@ def process_location_matching(data, context):
         should_add_state_from_zip = 'state' not in pre_processed_data.columns and 'zip' in pre_processed_data.columns
         has_chain = 'chain_id' in pre_processed_data.columns or 'chain_name' in pre_processed_data.columns
         has_sic_code = 'sic_code' in pre_processed_data.columns
-        has_sic_code = has_sic_code and not has_chain
+        # has_sic_code = has_sic_code and not has_chain
         for key in validation_fields:
             if validation_fields[key] not in pre_processed_data:
                 pre_processed_data[validation_fields[key]] = None

@@ -7,14 +7,10 @@ import traceback
 import smtplib
 import pytz
 from airflow import DAG
-from google.cloud.bigquery import job
-from airflow.operators import bash_operator
 from airflow.operators.python_operator import PythonOperator
 import google.auth
 from google.cloud import bigquery
-# from google.cloud import bigquery_storage_v1beta1 Error with this!
 from google.cloud import storage
-from google.oauth2 import service_account
 from os.path import basename
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -42,18 +38,14 @@ dag = DAG(
     schedule_interval=None
 )
 
-# Print the dag_run's configuration, which includes information about the
-# Cloud Storage object change.
-
-
 # Define functions and query strings
 
 delete_intermediate_tables = False
 send_email_on_error = True
 data_set_original = "location_matching_file"
 data_set_final = "location_matching_match"
-# bucket = 'location_matching' TODO: Volver a poner este bucket
-bucket = 'dannyv'
+bucket = 'location_matching' # TODOne: Volver a poner este bucket
+# bucket = 'dannyv'
 mail_from = 'dviorel@inmarket.com'
 email_error = ['dviorel@inmarket.com']
 mail_user = 'dviorel@inmarket.com'
@@ -86,7 +78,6 @@ def _send_mail(mail_from, send_to, subject, body, attachments=None):
             )
         part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
         msg.attach(part)
-
     msg.attach(MIMEText(body))
     smtp = smtplib.SMTP(mail_server, port=587)
     smtp.starttls()
@@ -125,7 +116,9 @@ def send_email_results(**context):
     if '.' in file_name_email:
         file_name_email = file_name_email[:file_name_email.index('.')]
     _send_mail(mail_from, [destination_email], f'{file_name_email} matched locations ',
-               'Hello,\n\nPlease see your location results attached.', [temp_local_file])
+               'Hello,\n\nPlease see your location results attached. '
+               f'You can check the complete results in BigQuery - {data_set_final}.{preprocessed_table};',
+               [temp_local_file])
     logging.warning(f'log: send_email_results 06 email sended')
     os.remove(temp_local_file)
     the_bucket.delete_blob(file_result)
@@ -141,6 +134,7 @@ def _set_table_expiration(dataset, table_name, expiration_days, bq_client):
 
 def _run_location_matching(table, destination_table, bq_client, algorithm):
     query = None
+    logging.warning(f'Will run location_matching with {algorithm}')
     if algorithm == LMAlgo.CHAIN:
         query = f""" create temporary function strMatchRate(str1 STRING, str2 string, type string, city string) 
   returns float64 
@@ -491,6 +485,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
                                   where isa_match <> 'unlikely'
                     order by row
                 )a
+                order by row
         '''
     # query_job = bq_client.query(query, project=project, job_config=job_config)
     query_job = bq_client.query(query, project=project)
@@ -500,14 +495,21 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
 def execute_location_matching(**context):
     try:
         logging.warning('log: execute_location_matching started')
-        dag_run = context['dag_run']
-        preprocessed_table = dag_run.conf["table"]
+        preprocessed_table = context['dag_run'].conf['table']
+        has_sic_code = context['dag_run'].conf['has_sic_code']
+        has_chain = context['dag_run'].conf['has_chain']
+        logging.warning(f'has_sic_code: {has_sic_code}, type {type(has_sic_code)}')
+        logging.warning(f'has_chain: {has_chain}, type {type(has_chain)}')
+        has_sic_code = has_sic_code and not has_chain
+        logging.warning(f'has_sic_code it eval: {has_sic_code}, type {type(has_sic_code)}')
         location_matching_table = preprocessed_table + '_lm'
         credentials, _ = google.auth.default(scopes=[url_auth_gcp])
         logging.warning('log: credentials readed')
         bq_client = bigquery.Client(project=project, credentials=credentials)
         logging.warning('log: bq_client obtained, will run location_matching')
-        _run_location_matching(preprocessed_table, location_matching_table, bq_client, LMAlgo.CHAIN)
+
+        _run_location_matching(preprocessed_table, location_matching_table, bq_client,
+                               LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
         logging.warning(f'log: location_matching ended in table {location_matching_table}')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
@@ -516,12 +518,18 @@ def execute_location_matching(**context):
 def prepare_results_table(**context):
     try:
         logging.warning('log: prepare_results_table')
-        preprocessed_table = context['dag_run'].conf["table"]
+        preprocessed_table = context['dag_run'].conf['table']
+        has_sic_code = context['dag_run'].conf['has_sic_code']
+        has_chain = context['dag_run'].conf['has_chain']
+        logging.warning(f'has_sic_code: {has_sic_code}, type {type(has_sic_code)}')
+        logging.warning(f'has_chain: {has_chain}, type {type(has_chain)}')
+        has_sic_code = has_sic_code and not has_chain
+        logging.warning(f'has_sic_code it eval: {has_sic_code}, type {type(has_sic_code)}')
         credentials, _ = google.auth.default(scopes=[url_auth_gcp])
-        logging.warning('log: credentials readed')
         bq_client = bigquery.Client(project=project, credentials=credentials)
         logging.warning(f'log: bq_client obtained, will create final table {preprocessed_table}')
-        _create_final_table(preprocessed_table + '_lm', preprocessed_table, bq_client, LMAlgo.CHAIN, False)
+        _create_final_table(preprocessed_table + '_lm', preprocessed_table, bq_client,
+                            LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, False)
         logging.warning('log: prepare_results ended')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
@@ -571,10 +579,5 @@ prepare_results_table.set_upstream(execute_location_matching)
 send_email_results.set_upstream(prepare_results_table)
 delete_temp_data.set_upstream(send_email_results)
 
-# Read the file in a Pandas Dataframe, preprocess, save table to BigQuery, push the table_name to a Xcom variable
-#    I think we also need the has_sic_code variable.
-# Execute the Location Matching Algorithm,
-# Create the final table name
-# Send email with results
 # Delete temp tables and intermediate results
 # Maybe airflow variables to determine log level and drop/delete policy?

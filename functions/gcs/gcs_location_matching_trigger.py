@@ -692,7 +692,7 @@ def process_location_matching(data, context):
         raw_data.columns = map(str.lower, raw_data.columns)
         raw_data.columns = map(str.strip, raw_data.columns)
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)
-        pre_processed_data = raw_data[column_validation_fields].\
+        pre_processed_data = raw_data[column_validation_fields]. \
             rename(columns=lambda name: name.replace(' ', '_').replace('(', '_').replace(')', '_'), inplace=False)
         df_states = (bq_client.query(query_states).result().
                      to_dataframe(bqstorage_client=bq_storage_client))
