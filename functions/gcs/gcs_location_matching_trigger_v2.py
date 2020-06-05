@@ -183,12 +183,14 @@ def _get_state_code(state, df_states):
 
 
 def _get_chain_name(chain_id, df_chains):
-    # match = df_chains[df_chains['chain_id'] == chain_id]
+    match = df_chains[df_chains['chain_id'] == chain_id]
     # if len(match) == 0:
     #     raise Exception(f'No chain for chain_id {chain_id}!')
     # if len(match) > 1:
     #     raise Exception(f'{len(match)} occurrences for chain_id {chain_id}!')
     # return match.iloc[0]['name']
+    if len(match) > 0:
+        return match.iloc[0]['name']
     return chain_id
 
 
@@ -211,7 +213,8 @@ def _add_clean_fields(table, bq_client):
                             \"\"\"
                             OPTIONS (library=['gs://javascript_lib/addr_functions.js']);
                             create or replace table {data_set_original}.{table} as 
-                            select *, cleanstr(chain_name, 'chain') clean_chain, 
+                            select * except(chain_name), cast(chain_name AS STRING) chain_name, 
+                            cleanstr(cast(chain_name AS STRING), 'chain') clean_chain, 
                             cleanstr(street_address, 'addr') clean_addr, cleanstr(city, 'city') clean_city
                             from `{data_set_original}.{table}`  
         """
@@ -398,16 +401,16 @@ def process_location_matching(data, context):
         has_chain = 'chain_id' in pre_processed_data.columns or 'chain_name' in pre_processed_data.columns
         has_sic_code = 'sic_code' in pre_processed_data.columns
         # has_sic_code = has_sic_code and not has_chain
+        logging.debug(f'has_sic_code: {has_sic_code} ...{original_name}')
+        if 'chain_id' in pre_processed_data.columns:
+            #       if 'chain id' in raw_data.columns:
+            df_chains = (bq_client.query(query_chains).
+                         result().to_dataframe(bqstorage_client=bq_storage_client))
+            pre_processed_data['chain_name'] = pre_processed_data['chain_id'].apply(
+                lambda chain_id: _get_chain_name(chain_id, df_chains))
         for key in validation_fields:
             if validation_fields[key] not in pre_processed_data:
                 pre_processed_data[validation_fields[key]] = None
-        logging.debug(f'has_sic_code: {has_sic_code} ...{original_name}')
-        if 'chain_id' in pre_processed_data.columns:
-            df_chains = (bq_client.query(query_chains).
-                         result().to_dataframe(bqstorage_client=bq_storage_client))
-            pre_processed_data['chain'] = pre_processed_data['chain_id'].apply(lambda chain_id:
-                                                                               _get_chain_name(chain_id, df_chains))
-
         if 'address_full__no_zip_' in pre_processed_data.columns or 'address_full' in pre_processed_data.columns \
                 or 'address_full__address_state_city_zip_' in pre_processed_data.columns:
             df_cities = (bq_client.query(query_cities).
@@ -499,7 +502,8 @@ def process_location_matching(data, context):
 # process_location_matching({'name': 'dviorel@inmarket.com/simple list 2.with.point!$%^&_-+=-, ___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/sic code match___no_mv_gcs.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row_addr.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row_addr.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/simple list 2_reduced_id___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Multiple chain ids___no_mv_gcs.txt'}, None)
