@@ -374,9 +374,10 @@ def process_location_matching(data, context):
         raw_data.columns = map(str.lower, raw_data.columns)
         raw_data.columns = map(str.strip, raw_data.columns)
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)
-        pre_processed_data = raw_data[column_validation_fields].\
+        pre_processed_data = raw_data[column_validation_fields]. \
             rename(columns=lambda name: name.replace(' ', '_').replace('(', '_').replace(')', '_'), inplace=False)
-        df_states = (bq_client.query(query_states).result().to_dataframe(bqstorage_client=bq_storage_client))
+        df_states = (bq_client.query(query_states).result().
+                     to_dataframe(bqstorage_client=bq_storage_client))
         # Complete columns not present in file
         should_add_state_from_zip = 'state' not in pre_processed_data.columns and 'zip' in pre_processed_data.columns
         has_chain = 'chain_id' in pre_processed_data.columns or 'chain_name' in pre_processed_data.columns
@@ -481,22 +482,3 @@ def process_location_matching(data, context):
                 pass
         if fail_on_error:
             raise e
-
-
-# process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/chain id _ name both___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated_good___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/simple list 2.with.point!$%^&_-+=-, ___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/sic code match___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row_addr.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/simple list 2_reduced_id___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/Multiple chain ids___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue___no_mv_gcs.txt'}, None)
-# _send_mail('dviorel@inmarket.com', ['dviorel@inmarket.com'], 'My test', 'The body')

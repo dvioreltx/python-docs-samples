@@ -132,10 +132,12 @@ def _set_table_expiration(dataset, table_name, expiration_days, bq_client):
     bq_client.update_table(table, ["expires"])
 
 
-def _run_location_matching(table, destination_table, bq_client, algorithm):
+def _run_location_matching(table, destination_table, bq_client, algorithm, has_zip, has_city):
     query = None
     logging.warning(f'Will run location_matching with {algorithm}')
     if algorithm == LMAlgo.CHAIN:
+        if not has_zip and not has_city:
+            raise Exception('Zip OR City is required to run Location Matching Algorithm!')
         query = f""" create temporary function strMatchRate(str1 STRING, str2 string, type string, city string) 
   returns float64 
   language js as "return scoreMatchFor(str1, str2, type, city)";    
@@ -223,7 +225,8 @@ begin -- stage 1 - join sample to location_geofence on zipcodes
 insert into stage1
 with 
  combined as (
-   select * from sample a left join location_geofence b on lg_zip = zip
+   select * from sample a left join location_geofence b 
+    on {'lg_zip = zip' if has_zip else 'lg_clean_city = clean_city' }
  ),
  chain_match_scores as (
    select *
@@ -304,7 +307,7 @@ create temporary function strMatchRate(str1 STRING, str2 string, type string, ac
 OPTIONS (
 library=['gs://javascript_lib/addr_functions.js']
 );
-  CREATE OR REPLACE TABLE {data_set_original}.{destination_table} AS
+  CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
   with
     sample as (
       select *, concat(sic_code, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store 
@@ -498,6 +501,9 @@ def execute_location_matching(**context):
         preprocessed_table = context['dag_run'].conf['table']
         has_sic_code = context['dag_run'].conf['has_sic_code']
         has_chain = context['dag_run'].conf['has_chain']
+        has_zip = context['dag_run'].conf['has_zip']
+        has_city = context['dag_run'].conf['has_city']
+
         logging.warning(f'has_sic_code: {has_sic_code}, type {type(has_sic_code)}')
         logging.warning(f'has_chain: {has_chain}, type {type(has_chain)}')
         has_sic_code = has_sic_code and not has_chain
@@ -507,9 +513,8 @@ def execute_location_matching(**context):
         logging.warning('log: credentials readed')
         bq_client = bigquery.Client(project=project, credentials=credentials)
         logging.warning('log: bq_client obtained, will run location_matching')
-
         _run_location_matching(preprocessed_table, location_matching_table, bq_client,
-                               LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN)
+                               LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, has_zip, has_city)
         logging.warning(f'log: location_matching ended in table {location_matching_table}')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
@@ -578,3 +583,8 @@ delete_temp_data = PythonOperator(
 prepare_results_table.set_upstream(execute_location_matching)
 send_email_results.set_upstream(prepare_results_table)
 delete_temp_data.set_upstream(send_email_results)
+
+
+# TODO: just for testing purposes:
+# matching_list_nozip___no_mv_gcs
+# execute_location_matching()
