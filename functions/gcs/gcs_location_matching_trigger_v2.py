@@ -440,6 +440,17 @@ def process_location_matching(data, context):
         _set_table_expiration(data_set_original, preprocessed_table, expiration_days_original_table, bq_client)
         logging.warning(f'Will add clean fields: {preprocessed_table} ...{original_name}')
         _add_clean_fields(preprocessed_table, bq_client)
+        # TODO: Determine if chain id OR chain name has multiple values
+        has_multiple_chain_id = False
+        has_multiple_chain_name = False
+        if 'chain id' in raw_data.columns:
+            queried_df = pre_processed_data[pre_processed_data['chain id'].str.contains(',')]
+            if len(queried_df.index) > 0:
+                has_multiple_chain_id = True
+        if 'chain name' in raw_data.columns:
+            queried_df = pre_processed_data[pre_processed_data['chain name'].str.contains(',')]
+            if len(queried_df.index) > 0:
+                has_multiple_chain_id = True
         if should_add_state_from_zip:
             logging.warning(f'Will add states from zip codes: {preprocessed_table} ...{original_name}')
             _add_state_from_zip(preprocessed_table, bq_client)
@@ -459,6 +470,8 @@ def process_location_matching(data, context):
         data['has_city'] = has_city
         data['has_state'] = has_state
         data['has_zip'] = has_zip
+        data['has_multiple_chain_id'] = has_multiple_chain_id
+        data['has_multiple_chain_name'] = has_multiple_chain_name
         _make_iap_request(webserver_url, client_id, method='POST', json={"conf": data})
         storage_client = storage.Client()
         if delete_gcs_files and '___no_mv_gcs' not in file_full_name:
@@ -494,8 +507,9 @@ def process_location_matching(data, context):
 # process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/sic code match___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row_addr.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/simple list 2_reduced_id___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/simple list 2_reduced_id___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new_test___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Multiple chain ids___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue___no_mv_gcs.txt'}, None)

@@ -9,45 +9,42 @@ OPTIONS (
 library=['gs://javascript_lib/addr_functions.js']
 );
 -- REPLACE DESTINATION HERE
--- CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
+CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
 with
 sample as (
-  select *, concat(sic_code, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store
-  from (
-    select  substr(cast(sic_code as string), 0 ,4) sic_code, clean_addr,
-            clean_city, state, zip
+  select  chain_id, clean_addr,
+          clean_city, state, zip,
+          concat(chain_id, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store
     -- REPLACE SOURCE HERE
     from `{data_set_original}.{table}`
-  )
 ),
-sic_code_array as (
-  select split(sic_code) sic_arr
+chain_array as (
+  select split(chain_id) chain_arr
   from (
-    select distinct sic_code from sample
+    select distinct chain_id from sample
   )
 ),
-unique_sic_codes as (
+unique_chain as (
   select array(
-        select distinct regexp_replace(trim(x), ' ', '') from unnest(sic_codes) as x
-      ) sic_codes
+        select distinct regexp_replace(trim(x), ' ', '') from unnest(chains) as x
+      ) chains
   from (
-    select array_concat_agg(sic_arr) sic_codes from sic_code_array
+    select array_concat_agg(chain_arr) chains from chain_array
   )
 ),
 location_geofence as (
-  select chain_name lg_chain, lat lg_lat, lon lg_lon, addr lg_addr,
+  select chain_id lg_chain_id, chain_name lg_chain, lat lg_lat, lon lg_lon, addr lg_addr,
          city lg_city, state lg_state, substr(trim(zip),0,5) lg_zip, location_id,
          clean_chain clean_lg_chain, clean_addr clean_lg_addr, clean_city clean_lg_city,
          substr(sic_code, 0 ,4) lg_sic_code
   from `aggdata.location_geofence_cleaned`
-  where substr(sic_code, 0 ,4) in unnest((select sic_codes from unique_sic_codes))
+  where cast(chain_id as string) in unnest((select chains from unique_chain))
     ),
 sample_lg_join as (
-  select distinct sic_code, lg_sic_code, * except (sic_code, lg_sic_code)
-from sample join location_geofence on (clean_city = clean_lg_city or zip = lg_zip)
-      where regexp_contains(sic_code, lg_sic_code)
-    )
-    select *,
+  select *
+    from sample join location_geofence on (clean_city = clean_lg_city or zip = lg_zip)
+)
+select *,
 case
 when addr_match >= 1  then 'definitely'
 when addr_match >= .9 then 'very probably'
@@ -59,8 +56,8 @@ end isa_match
 from (
   select *, row_number() over (partition by store order by addr_match desc, clean_lg_addr) ar
   from (
-    select sic_code, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, lg_state, zip,
-           lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, store, location_id
+    select lg_chain_id, lg_chain, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, lg_state,
+           zip, lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, location_id, store
     from sample_lg_join
   )
 )

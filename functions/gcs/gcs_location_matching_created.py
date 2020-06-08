@@ -132,10 +132,77 @@ def _set_table_expiration(dataset, table_name, expiration_days, bq_client):
     bq_client.update_table(table, ["expires"])
 
 
-def _run_location_matching(table, destination_table, bq_client, algorithm, has_zip, has_city):
+def _run_location_matching(table, destination_table, bq_client, algorithm, has_zip, has_city, is_multiple_chain_id,
+                           is_multiple_chain_name):
     query = None
-    logging.warning(f'Will run location_matching with {algorithm}')
-    if algorithm == LMAlgo.CHAIN:
+    logging.warning(f'Will run location_matching with {algorithm} mid {is_multiple_chain_id} mcn {is_multiple_chain_name}')
+    if is_multiple_chain_id:
+        query = f"""#standardSQL
+declare level_of_accuracy string default '';
+set level_of_accuracy = 'relaxed';
+create temporary function strMatchRate(str1 STRING, str2 string, type string, accuracy string) returns FLOAT64
+language js as \"\"\"
+return scoreMatchFor(str1, str2, type, accuracy)
+\"\"\"
+OPTIONS (
+library=['gs://javascript_lib/addr_functions.js']
+);
+-- REPLACE DESTINATION HERE
+CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
+with
+sample as (
+  select  chain_id, clean_addr,
+          clean_city, state, zip,
+          concat(chain_id, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store
+    -- REPLACE SOURCE HERE
+    from `{data_set_original}.{table}`
+),
+chain_array as (
+  select split(chain_id) chain_arr
+  from (
+    select distinct chain_id from sample
+  )
+),
+unique_chain as (
+  select array(
+        select distinct regexp_replace(trim(x), ' ', '') from unnest(chains) as x
+      ) chains
+  from (
+    select array_concat_agg(chain_arr) chains from chain_array
+  )
+),
+location_geofence as (
+  select chain_id lg_chain_id, chain_name lg_chain, lat lg_lat, lon lg_lon, addr lg_addr,
+         city lg_city, state lg_state, substr(trim(zip),0,5) lg_zip, location_id,
+         clean_chain clean_lg_chain, clean_addr clean_lg_addr, clean_city clean_lg_city,
+         substr(sic_code, 0 ,4) lg_sic_code
+  from `aggdata.location_geofence_cleaned`
+  where cast(chain_id as string) in unnest((select chains from unique_chain))
+    ),
+sample_lg_join as (
+  select *
+    from sample join location_geofence on (clean_city = clean_lg_city or zip = lg_zip)
+)
+select *,
+case
+when addr_match >= 1  then 'definitely'
+when addr_match >= .9 then 'very probably'
+when addr_match >= .8 then 'probably'
+when addr_match >= .7 then 'likely'
+when addr_match >= .6 then 'possibly'
+else                       'unlikely'
+end isa_match
+from (
+  select *, row_number() over (partition by store order by addr_match desc, clean_lg_addr) ar
+  from (
+    select lg_chain_id, lg_chain, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, lg_state,
+           zip, lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, location_id, store
+    from sample_lg_join
+  )
+)
+where ar = 1;
+        """
+    elif algorithm == LMAlgo.CHAIN:
         if not has_zip and not has_city:
             raise Exception('Zip OR City is required to run Location Matching Algorithm!')
         query = f""" create temporary function strMatchRate(str1 STRING, str2 string, type string, city string) 
@@ -365,15 +432,37 @@ library=['gs://javascript_lib/addr_functions.js']
       """
     else:
         raise NotImplementedError(f'{algorithm} not implemented!')
+    logging.warning(f'It will run {query}')
     query_job = bq_client.query(query, project=project)
     query_job.result()
 
 
-def _create_final_table(table, destination_table, bq_client, algorithm, full_result):
+def _create_final_table(table, destination_table, bq_client, algorithm, full_result, is_multiple_chain_id,
+                        is_multiple_chain_name):
     # job_config = bigquery.QueryJobConfig(destination=f'{project}.{data_set_final}.{destination_table}')
     # job_config.write_disposition = job.WriteDisposition.WRITE_TRUNCATE
     query = None
-    if algorithm == LMAlgo.CHAIN:
+    if is_multiple_chain_id:
+        query = f"""CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
+                    select ROW_NUMBER() OVER() as row, '' as provided_chain, p.lg_chain as matched_chain,
+                    p.clean_addr as provided_address,
+                    p.clean_city as provided_city,
+                    p.state as provided_state,
+                    -- p.zip as provided_zip, 
+                    case when p.isa_match = 'unlikely' then null else p.clean_lg_addr end as matched_address,
+                    case when p.isa_match = 'unlikely' then null else p.clean_lg_city end as matched_city,
+                    case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
+                    case when p.isa_match = 'unlikely' then null else p.lg_zip end as zip, 
+                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id,
+                    case when p.isa_match = 'unlikely' then null else l.lat end as lat,
+                    case when p.isa_match = 'unlikely' then null else l.lon end as lon,
+                    p.isa_match as isa_match, 
+                    '' as store_id
+                from {data_set_original}.{table} p
+                left join aggdata.location_geofence l on p.location_id = l.location_id
+                 order by row
+            """
+    elif algorithm == LMAlgo.CHAIN:
         if not full_result:
             query = f"""CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
                     select ROW_NUMBER() OVER() as row, 
@@ -474,6 +563,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
     else:
         raise NotImplementedError(f'{algorithm} not expected!')
     # query_job = bq_client.query(query, project=project, job_config=job_config)
+    logging.warning(f'It will run {query}')
     query_job = bq_client.query(query, project=project)
     query_job.result()
     _set_table_expiration(data_set_final, destination_table, expiration_days_results_table, bq_client)
@@ -503,9 +593,14 @@ def execute_location_matching(**context):
         has_chain = context['dag_run'].conf['has_chain']
         has_zip = context['dag_run'].conf['has_zip']
         has_city = context['dag_run'].conf['has_city']
+        has_multiple_chain_id = context['dag_run'].conf['has_multiple_chain_id']
+        has_multiple_chain_name = context['dag_run'].conf['has_multiple_chain_name']
+        logging.warning(f'has_sic_code: {has_sic_code}')
+        logging.warning(f'has_chain: {has_chain}')
+        logging.warning(f'has_zip: {has_zip}')
+        logging.warning(f'has_multiple_chain_id: {has_multiple_chain_id}')
+        logging.warning(f'has_multiple_chain_name: {has_multiple_chain_name}')
 
-        logging.warning(f'has_sic_code: {has_sic_code}, type {type(has_sic_code)}')
-        logging.warning(f'has_chain: {has_chain}, type {type(has_chain)}')
         has_sic_code = has_sic_code and not has_chain
         logging.warning(f'has_sic_code it eval: {has_sic_code}, type {type(has_sic_code)}')
         location_matching_table = preprocessed_table + '_lm'
@@ -514,7 +609,8 @@ def execute_location_matching(**context):
         bq_client = bigquery.Client(project=project, credentials=credentials)
         logging.warning('log: bq_client obtained, will run location_matching')
         _run_location_matching(preprocessed_table, location_matching_table, bq_client,
-                               LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, has_zip, has_city)
+                               LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, has_zip, has_city,
+                               has_multiple_chain_id, has_multiple_chain_name)
         logging.warning(f'log: location_matching ended in table {location_matching_table}')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
@@ -526,6 +622,8 @@ def prepare_results_table(**context):
         preprocessed_table = context['dag_run'].conf['table']
         has_sic_code = context['dag_run'].conf['has_sic_code']
         has_chain = context['dag_run'].conf['has_chain']
+        has_multiple_chain_id = context['dag_run'].conf['has_multiple_chain_id']
+        has_multiple_chain_name = context['dag_run'].conf['has_multiple_chain_name']
         logging.warning(f'has_sic_code: {has_sic_code}, type {type(has_sic_code)}')
         logging.warning(f'has_chain: {has_chain}, type {type(has_chain)}')
         has_sic_code = has_sic_code and not has_chain
@@ -534,7 +632,8 @@ def prepare_results_table(**context):
         bq_client = bigquery.Client(project=project, credentials=credentials)
         logging.warning(f'log: bq_client obtained, will create final table {preprocessed_table}')
         _create_final_table(preprocessed_table + '_lm', preprocessed_table, bq_client,
-                            LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, False)
+                            LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, False, has_multiple_chain_id,
+                            has_multiple_chain_name)
         logging.warning('log: prepare_results ended')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
@@ -583,8 +682,3 @@ delete_temp_data = PythonOperator(
 prepare_results_table.set_upstream(execute_location_matching)
 send_email_results.set_upstream(prepare_results_table)
 delete_temp_data.set_upstream(send_email_results)
-
-
-# TODO: just for testing purposes:
-# matching_list_nozip___no_mv_gcs
-# execute_location_matching()
