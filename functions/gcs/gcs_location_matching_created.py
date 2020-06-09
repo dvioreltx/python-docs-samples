@@ -136,7 +136,8 @@ def _run_location_matching(table, destination_table, bq_client, algorithm, has_z
                            is_multiple_chain_name):
     query = None
     logging.warning(f'Will run location_matching with {algorithm} mid {is_multiple_chain_id} mcn {is_multiple_chain_name}')
-    if is_multiple_chain_id:
+    if is_multiple_chain_id or is_multiple_chain_name:
+        field = 'chain_id' if is_multiple_chain_id else 'chain_name'
         query = f"""#standardSQL
 declare level_of_accuracy string default '';
 set level_of_accuracy = 'relaxed';
@@ -147,25 +148,23 @@ return scoreMatchFor(str1, str2, type, accuracy)
 OPTIONS (
 library=['gs://javascript_lib/addr_functions.js']
 );
--- REPLACE DESTINATION HERE
 CREATE OR REPLACE TABLE {data_set_original}.{destination_table} AS
 with
 sample as (
-  select  chain_id, clean_addr,
+  select  {field}, clean_addr,
           clean_city, state, zip,
-          concat(chain_id, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store
-    -- REPLACE SOURCE HERE
+          concat({field}, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store
     from `{data_set_original}.{table}`
 ),
 chain_array as (
-  select split(chain_id) chain_arr
+  select split({field}) chain_arr
   from (
-    select distinct chain_id from sample
+    select distinct {field} from sample
   )
 ),
 unique_chain as (
   select array(
-        select distinct regexp_replace(trim(x), ' ', '') from unnest(chains) as x
+        select distinct trim(x) from unnest(chains) as x
       ) chains
   from (
     select array_concat_agg(chain_arr) chains from chain_array
@@ -177,7 +176,7 @@ location_geofence as (
          clean_chain clean_lg_chain, clean_addr clean_lg_addr, clean_city clean_lg_city,
          substr(sic_code, 0 ,4) lg_sic_code
   from `aggdata.location_geofence_cleaned`
-  where cast(chain_id as string) in unnest((select chains from unique_chain))
+  where cast({field} as string) in unnest((select chains from unique_chain))
     ),
 sample_lg_join as (
   select *
@@ -442,7 +441,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
     # job_config = bigquery.QueryJobConfig(destination=f'{project}.{data_set_final}.{destination_table}')
     # job_config.write_disposition = job.WriteDisposition.WRITE_TRUNCATE
     query = None
-    if is_multiple_chain_id:
+    if is_multiple_chain_id or is_multiple_chain_name:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
                     select ROW_NUMBER() OVER() as row, '' as provided_chain, p.lg_chain as matched_chain,
                     p.clean_addr as provided_address,

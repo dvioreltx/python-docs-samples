@@ -440,7 +440,6 @@ def process_location_matching(data, context):
         _set_table_expiration(data_set_original, preprocessed_table, expiration_days_original_table, bq_client)
         logging.warning(f'Will add clean fields: {preprocessed_table} ...{original_name}')
         _add_clean_fields(preprocessed_table, bq_client)
-        # TODO: Determine if chain id OR chain name has multiple values
         has_multiple_chain_id = False
         has_multiple_chain_name = False
         if 'chain id' in raw_data.columns:
@@ -450,7 +449,7 @@ def process_location_matching(data, context):
         if 'chain name' in raw_data.columns:
             queried_df = raw_data[raw_data['chain name'].str.contains(',', na=False)]
             if len(queried_df.index) > 0:
-                has_multiple_chain_id = True
+                has_multiple_chain_name = True
         if should_add_state_from_zip:
             logging.warning(f'Will add states from zip codes: {preprocessed_table} ...{original_name}')
             _add_state_from_zip(preprocessed_table, bq_client)
@@ -485,13 +484,13 @@ def process_location_matching(data, context):
             source_bucket.delete_blob(from_blob.name)
         logging.warning(f'Process finished for {file_full_name}')
     except Exception as e:
-        logging.exception(f'Unexpected error {e}')
+        logging.exception(f'Unexpected error: {e}. Message: {traceback.format_exc()}')
         if send_email_on_error:
             try:
                 _send_mail(mail_from, email_error, 'location_matching tool error',
                            f'Error processing location matching: {traceback.format_exc()}')
-            except Exception:
-                pass
+            except Exception as e1:
+                logging.exception(f'Unexpected error sending email {e1}: {traceback.format_exc()}')
         if fail_on_error:
             raise e
 
