@@ -444,11 +444,11 @@ def process_location_matching(data, context):
         has_multiple_chain_id = False
         has_multiple_chain_name = False
         if 'chain id' in raw_data.columns:
-            queried_df = raw_data[raw_data['chain id'].str.contains(',')]
+            queried_df = raw_data[raw_data['chain id'].str.contains(',', na=False)]
             if len(queried_df.index) > 0:
                 has_multiple_chain_id = True
         if 'chain name' in raw_data.columns:
-            queried_df = raw_data[raw_data['chain name'].str.contains(',')]
+            queried_df = raw_data[raw_data['chain name'].str.contains(',', na=False)]
             if len(queried_df.index) > 0:
                 has_multiple_chain_id = True
         if should_add_state_from_zip:
@@ -509,7 +509,8 @@ def process_location_matching(data, context):
 # process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row_addr.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/simple list 2_reduced_id___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new_test___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new_test___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Multiple chain ids___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue___no_mv_gcs.txt'}, None)
