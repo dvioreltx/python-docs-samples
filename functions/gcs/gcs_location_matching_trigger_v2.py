@@ -444,11 +444,11 @@ def process_location_matching(data, context):
         has_multiple_chain_id = False
         has_multiple_chain_name = False
         if 'chain id' in raw_data.columns:
-            queried_df = pre_processed_data[pre_processed_data['chain id'].str.contains(',')]
+            queried_df = raw_data[raw_data['chain id'].str.contains(',')]
             if len(queried_df.index) > 0:
                 has_multiple_chain_id = True
         if 'chain name' in raw_data.columns:
-            queried_df = pre_processed_data[pre_processed_data['chain name'].str.contains(',')]
+            queried_df = raw_data[raw_data['chain name'].str.contains(',')]
             if len(queried_df.index) > 0:
                 has_multiple_chain_id = True
         if should_add_state_from_zip:

@@ -148,7 +148,7 @@ OPTIONS (
 library=['gs://javascript_lib/addr_functions.js']
 );
 -- REPLACE DESTINATION HERE
-CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
+CREATE OR REPLACE TABLE {data_set_original}.{destination_table} AS
 with
 sample as (
   select  chain_id, clean_addr,
