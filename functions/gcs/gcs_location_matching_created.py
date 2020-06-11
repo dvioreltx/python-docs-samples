@@ -422,8 +422,8 @@ library=['gs://javascript_lib/addr_functions.js']
     from (
       select *, row_number() over (partition by store order by addr_match desc, clean_lg_addr) ar
       from (
-        select sic_code, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, lg_state, zip, 
-          lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, store, location_id
+        select lg_chain, sic_code, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, lg_state, 
+            zip, lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, store, location_id
         from sample_lg_join 
       )
     ) 
@@ -517,7 +517,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
     elif algorithm == LMAlgo.SIC_CODE:
         if not full_result:
             query = f"""CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
-                    select ROW_NUMBER() OVER() as row, '' as provided_chain, '' as matched_chain,
+                    select ROW_NUMBER() OVER() as row, '' as provided_chain, p.lg_chain as matched_chain,
                     p.clean_addr as provided_address,
                     p.clean_city as provided_city,
                     p.state as provided_state,
@@ -537,7 +537,7 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
             """
         else:
             query = f"""CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
-                    select ROW_NUMBER() OVER() as row, '' as provided_chain, '' as matched_chain,
+                    select ROW_NUMBER() OVER() as row, '' as provided_chain, p.lg_chain as matched_chain,
                     p.clean_addr as provided_address,
                     p.clean_city as provided_city,
                     p.state as provided_state,
