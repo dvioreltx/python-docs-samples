@@ -332,7 +332,8 @@ def process_location_matching(data, context):
     try:
         logging.debug(f'Started {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
         validation_fields = {'sic code': 'sic_code', 'chain name/chain id': 'chain_name',
-                             'address/address full/address full (no zip)': 'address',
+                             'address/address full/address full (no zip)/address full (address, state, city, zip)':
+                                 'address',
                              'city': 'city', 'state': 'state', 'zip': 'zip'}
         original_name = data['name']
         logging.info(f'File created: {original_name}')
@@ -375,7 +376,8 @@ def process_location_matching(data, context):
         raw_data.columns = map(str.strip, raw_data.columns)
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)
         pre_processed_data = raw_data[column_validation_fields].\
-            rename(columns=lambda name: name.replace(' ', '_').replace('(', '_').replace(')', '_'), inplace=False)
+            rename(columns=lambda name: name.replace(' ', '_').replace('(', '_').replace(')', '_').replace(',', '_'),
+                   inplace=False)
         df_states = (bq_client.query(query_states).result().to_dataframe(bqstorage_client=bq_storage_client))
         # Complete columns not present in file
         should_add_state_from_zip = 'state' not in pre_processed_data.columns and 'zip' in pre_processed_data.columns
@@ -399,7 +401,14 @@ def process_location_matching(data, context):
             if validation_fields[key] not in pre_processed_data:
                 pre_processed_data[validation_fields[key]] = None
         if 'address_full__no_zip_' in pre_processed_data.columns or 'address_full' in pre_processed_data.columns \
-                or 'address_full__address_state_city_zip_' in pre_processed_data.columns:
+                or 'address_full__address_state_city_zip_' in pre_processed_data.columns \
+                or 'address_full__address__state__city__zip_' in pre_processed_data.columns:
+            has_city = True
+            has_state = True
+            if 'address_full' in pre_processed_data.columns or \
+                    'address_full__address_state_city_zip_' in pre_processed_data.columns or \
+                    'address_full__address__state__city__zip_' in pre_processed_data.columns:
+                has_zip = True
             df_cities = (bq_client.query(query_cities).result().to_dataframe(bqstorage_client=bq_storage_client))
             logging.debug(f'Cities readed ...{original_name}')
             address = None
@@ -412,12 +421,15 @@ def process_location_matching(data, context):
                     logging.debug(f'Row {index} of {len(pre_processed_data.index)} ...{original_name}')
                 if 'address_full__no_zip_' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full__no_zip_'], df_states,
-                                                                         df_cities, False, True)
+                                                                         df_cities, False, False)
                 if 'address_full' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full'], df_states,
                                                                          df_cities, True, False)
                 if 'address_full__address_state_city_zip_' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full__address_state_city_zip_'],
+                                                                         df_states, df_cities, True, True)
+                if 'address_full__address__state__city__zip_' in pre_processed_data.columns:
+                    address, state, city, zip_code = _split_address_data(row['address_full__address__state__city__zip_'],
                                                                          df_states, df_cities, True, True)
                 pre_processed_data.at[index, 'address'] = address
                 pre_processed_data.at[index, 'state'] = state
@@ -447,7 +459,8 @@ def process_location_matching(data, context):
             if len(queried_df.index) > 0:
                 has_multiple_chain_id = True
         if 'chain name' in raw_data.columns:
-            queried_df = raw_data[raw_data['chain name'].str.contains(',', na=False)]
+            # TODO: set a different separator
+            queried_df = raw_data[raw_data['chain name'].str.contains(';', na=False)]
             if len(queried_df.index) > 0:
                 has_multiple_chain_name = True
         if should_add_state_from_zip:
@@ -508,8 +521,12 @@ def process_location_matching(data, context):
 # process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row_addr.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/simple list 2_reduced_id___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/Matching_list___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/address full with both chain n sic code___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/address full _address_state_city_zip)___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/address full (no zip)___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new_test___no_mv_gcs.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/Multiple chain ids___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue___no_mv_gcs.txt'}, None)

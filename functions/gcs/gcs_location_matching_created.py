@@ -373,7 +373,7 @@ create temporary function strMatchRate(str1 STRING, str2 string, type string, ac
 OPTIONS (
 library=['gs://javascript_lib/addr_functions.js']
 );
-  CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
+  CREATE OR REPLACE TABLE {data_set_original}.{destination_table} AS
   with
     sample as (
       select *, concat(sic_code, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store 
@@ -586,8 +586,8 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
 
 def execute_location_matching(**context):
     try:
-        logging.warning('log: execute_location_matching started')
         preprocessed_table = context['dag_run'].conf['table']
+        logging.warning(f'log: execute_location_matching started for {preprocessed_table}')
         has_sic_code = context['dag_run'].conf['has_sic_code']
         has_chain = context['dag_run'].conf['has_chain']
         has_zip = context['dag_run'].conf['has_zip']
@@ -597,9 +597,9 @@ def execute_location_matching(**context):
         logging.warning(f'has_sic_code: {has_sic_code}')
         logging.warning(f'has_chain: {has_chain}')
         logging.warning(f'has_zip: {has_zip}')
+        logging.warning(f'has_city: {has_city}')
         logging.warning(f'has_multiple_chain_id: {has_multiple_chain_id}')
         logging.warning(f'has_multiple_chain_name: {has_multiple_chain_name}')
-
         has_sic_code = has_sic_code and not has_chain
         logging.warning(f'has_sic_code it eval: {has_sic_code}, type {type(has_sic_code)}')
         location_matching_table = preprocessed_table + '_lm'
@@ -623,8 +623,8 @@ def prepare_results_table(**context):
         has_chain = context['dag_run'].conf['has_chain']
         has_multiple_chain_id = context['dag_run'].conf['has_multiple_chain_id']
         has_multiple_chain_name = context['dag_run'].conf['has_multiple_chain_name']
-        logging.warning(f'has_sic_code: {has_sic_code}, type {type(has_sic_code)}')
-        logging.warning(f'has_chain: {has_chain}, type {type(has_chain)}')
+        logging.warning(f'has_sic_code: {has_sic_code}')
+        logging.warning(f'has_chain: {has_chain}')
         has_sic_code = has_sic_code and not has_chain
         logging.warning(f'has_sic_code it eval: {has_sic_code}, type {type(has_sic_code)}')
         credentials, _ = google.auth.default(scopes=[url_auth_gcp])
