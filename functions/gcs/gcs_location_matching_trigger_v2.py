@@ -445,6 +445,7 @@ def process_location_matching(data, context):
         pre_processed_data['lon'] = None
         if 'address_full' in pre_processed_data.columns:
             pre_processed_data = pre_processed_data.drop(['address_full'], axis=1)
+        pre_processed_data.insert(0, 'ppid', range(1, 1 + len(pre_processed_data)))
         preprocessed_table = file_name.lower()
         logging.warning(f'Will write to table: {preprocessed_table} ...{original_name}')
         pre_processed_data.to_gbq(f'{data_set_original}.{preprocessed_table}', project_id=project, progress_bar=False,
@@ -508,7 +509,7 @@ def process_location_matching(data, context):
             raise e
 
 
-# process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/chain id _ name both___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated___no_mv_gcs.txt'}, None)
@@ -524,7 +525,7 @@ def process_location_matching(data, context):
 # process_location_matching({'name': 'dviorel@inmarket.com/Matching_list___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/address full with both chain n sic code___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/address full _address_state_city_zip)___no_mv_gcs.txt'}, None)
-process_location_matching({'name': 'dviorel@inmarket.com/address full (no zip)___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/address full (no zip)___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new_test___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
