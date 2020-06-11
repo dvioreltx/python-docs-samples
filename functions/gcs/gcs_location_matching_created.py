@@ -151,7 +151,7 @@ library=['gs://javascript_lib/addr_functions.js']
 CREATE OR REPLACE TABLE {data_set_original}.{destination_table} AS
 with
 sample as (
-  select  {field}, clean_addr,
+  select  ppid, {field}, clean_addr,
           clean_city, state, zip,
           concat({field}, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store
     from `{data_set_original}.{table}`
@@ -194,8 +194,9 @@ end isa_match
 from (
   select *, row_number() over (partition by store order by addr_match desc, clean_lg_addr) ar
   from (
-    select lg_chain_id, lg_chain, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, lg_state,
-           zip, lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, location_id, store
+    select ppid, lg_chain_id, lg_chain, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, 
+            lg_state, zip, lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, location_id, 
+            store
     from sample_lg_join
   )
 )
@@ -238,10 +239,10 @@ from (
       when length(substr(zip,0,5)) = 4 then concat('0',zip)     
       else substr(zip,0,5)
     end as string) zip,
-    clean_chain, clean_addr, clean_city 
+    clean_chain, clean_addr, clean_city, ppid
   from ( 
     select chain_name chain, street_address  addr, city, state, zip,
-      clean_chain, clean_addr, clean_city
+      clean_chain, clean_addr, clean_city, ppid
     #####################################
     ###     ENTER INPUT FILE HERE     ###
     #####################################
@@ -263,6 +264,7 @@ from `aggdata.location_geofence_cleaned` a
 join our_states b on a.state = b.state
 ;
 create temp table stage1 (
+ppid            int64,
 store_id 	     int64,
 isa_match 	   string,
 match_score    float64,	
@@ -324,7 +326,7 @@ with
    from match_scores 
  ),
  best_matches as (
-   select chain_match, addr_match, match_score, match_rank, zip, chain, 
+   select ppid, chain_match, addr_match, match_score, match_rank, zip, chain, 
      lg_chain, addr, lg_addr, city, lg_city, state, lg_state, lg_lat, lg_lon, 
      safe_cast(location_id as string) location_id, 
      store, 
@@ -349,9 +351,9 @@ with
    from sorted_scores
    where match_rank = 1
  )
-select row_number() over () store_id, 
+select ppid, row_number() over () store_id, 
   isa_match, round(100-match_score,1) match_score, grade, 
-  * except (grade, isa_match, match_score, match_rank)
+  * except (ppid, grade, isa_match, match_score, match_rank)
 from best_matches
 ;  
 end;
@@ -378,7 +380,7 @@ library=['gs://javascript_lib/addr_functions.js']
     sample as (
       select *, concat(sic_code, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store 
       from (
-        select  substr(cast(sic_code as string), 0 ,4) sic_code, clean_addr, 
+        select ppid, substr(cast(sic_code as string), 0 ,4) sic_code, clean_addr, 
           clean_city, state, zip
         from `{data_set_original}.{table}`
       )
@@ -422,8 +424,9 @@ library=['gs://javascript_lib/addr_functions.js']
     from (
       select *, row_number() over (partition by store order by addr_match desc, clean_lg_addr) ar
       from (
-        select lg_chain, sic_code, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, lg_state, 
-            zip, lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, store, location_id
+        select ppid, lg_chain, sic_code, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, 
+            lg_state, zip, lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, store, 
+            location_id
         from sample_lg_join 
       )
     ) 
