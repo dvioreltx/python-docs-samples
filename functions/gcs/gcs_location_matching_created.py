@@ -380,7 +380,7 @@ library=['gs://javascript_lib/addr_functions.js']
     sample as (
       select *, concat(sic_code, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store 
       from (
-        select ppid, substr(cast(sic_code as string), 0 ,4) sic_code, clean_addr, 
+        select ppid, cast(sic_code as string) sic_code, clean_addr, 
           clean_city, state, zip
         from `{data_set_original}.{table}`
       )
