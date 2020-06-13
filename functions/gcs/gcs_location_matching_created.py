@@ -439,14 +439,15 @@ library=['gs://javascript_lib/addr_functions.js']
     query_job.result()
 
 
-def _create_final_table(table, destination_table, bq_client, algorithm, full_result, is_multiple_chain_id,
-                        is_multiple_chain_name):
+def _create_final_table(original_table, location_matching_table, final_table, bq_client, algorithm,
+                        is_multiple_chain_id, is_multiple_chain_name):
     # job_config = bigquery.QueryJobConfig(destination=f'{project}.{data_set_final}.{destination_table}')
     # job_config.write_disposition = job.WriteDisposition.WRITE_TRUNCATE
     query = None
     if is_multiple_chain_id or is_multiple_chain_name:
-        query = f"""CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
-                    select ROW_NUMBER() OVER() as row, '' as provided_chain, p.lg_chain as matched_chain,
+        query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
+                SELECT * FROM(
+                    select p.ppid as row, '' as provided_chain, p.lg_chain as matched_chain,
                     p.clean_addr as provided_address,
                     p.clean_city as provided_city,
                     p.state as provided_state,
@@ -460,13 +461,21 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
                     case when p.isa_match = 'unlikely' then null else l.lon end as lon,
                     p.isa_match as isa_match, 
                     '' as store_id
-                from {data_set_original}.{table} p
+                from {data_set_original}.{location_matching_table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
-                 order by row
+                union all
+                    select o.ppid as row, o.chain_name as provided_chain, '' as matched_chain, 
+                    o.street_address as provided_address, o.city as provided_city, o.state as provided_state,
+                    null as matched_address, null as matched_city, null as matched_state, null as zip, 
+                    null as location_id, null as lat, null as lon, 'unmatched' as isa_match, null as store_id
+                    from {data_set_original}.{original_table} o
+                    where o.ppid not in(
+                        select p.ppid from {data_set_original}.{location_matching_table} p
+                    )
+                 )order by row
             """
     elif algorithm == LMAlgo.CHAIN:
-        if not full_result:
-            query = f"""CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
+        query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                     select ROW_NUMBER() OVER() as row, 
                     -- case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain,
                     p.chain as provided_chain,
@@ -485,41 +494,10 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
                     case when p.isa_match = 'unlikely' then null else p.lg_lat end as lat, 
                     case when p.isa_match = 'unlikely' then null else p.lg_lon end as lon, 
                     p.isa_match as isa_match, p.store_id as store_id
-                from {data_set_original}.{table} p order by row
-            """
-        else:
-            query = f"""CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
-                  select ROW_NUMBER() OVER() as row, 
-                  -- case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain,
-                  p.chain as provided_chain,
-                  -- case when p.isa_match = 'unlikely' then p.addr else p.lg_addr end as address, 
-                  p.addr as provided_address,
-                  -- case when p.isa_match = 'unlikely' then p.city else p.lg_city end as city, 
-                  p.city as provided_city,
-                  -- case when p.isa_match = 'unlikely' then p.state else p.lg_state end as state, 
-                  p.state as provided_state,
-                  case when p.isa_match = 'unlikely' then null else p.lg_chain end as matched_chain,
-                  case when p.isa_match = 'unlikely' then null else p.lg_addr end as matched_address,  
-                  case when p.isa_match = 'unlikely' then null else p.lg_city end as matched_city,
-                  case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state, 
-                  p.zip as zip, 
-                  case when p.isa_match = 'unlikely' then null else p.location_id end as location_id, 
-                  case when p.isa_match = 'unlikely' then null else p.lg_lat end as lat, 
-                  case when p.isa_match = 'unlikely' then null else p.lg_lon end as lon, 
-                  p.isa_match as isa_match, p.store_id as store_id, 
-                p.store_id as raw_store_id, p.isa_match as raw_isa_match, p.match_score as raw_match_score, 
-                p.grade as raw_grade, p.match_round as raw_match_round, p.chain_match as raw_chain_match,
-                p.addr_match as raw_addr_match, p.chain as raw_chain, p.lg_chain as raw_lg_chain, p.addr as raw_addr,
-                p.lg_addr as raw_lg_addr, p.city as raw_city, p.lg_city as raw_lg_city, p.state as raw_state, 
-                p.lg_state as raw_lg_state, p.lg_lat as raw_lg_lat, p.lg_lon as raw_lg_lon, 
-                p.location_id as raw_location_id, p.store as raw_store, p.clean_chain as raw_clean_chain, 
-                p.clean_lg_chain as raw_clean_lg_chain, p.clean_addr as raw_clean_addr, 
-                p.clean_lg_addr as raw_clean_lg_addr
-                from {data_set_original}.{table} p  order by row
+                from {data_set_original}.{location_matching_table} p order by row
             """
     elif algorithm == LMAlgo.SIC_CODE:
-        if not full_result:
-            query = f"""CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
+        query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                     select ROW_NUMBER() OVER() as row, '' as provided_chain, p.lg_chain as matched_chain,
                     p.clean_addr as provided_address,
                     p.clean_city as provided_city,
@@ -534,50 +512,26 @@ def _create_final_table(table, destination_table, bq_client, algorithm, full_res
                     case when p.isa_match = 'unlikely' then null else l.lon end as lon,
                     p.isa_match as isa_match, 
                     '' as store_id
-                from {data_set_original}.{table} p
+                from {data_set_original}.{location_matching_table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
                  order by row
-            """
-        else:
-            query = f"""CREATE OR REPLACE TABLE {data_set_final}.{destination_table} AS
-                    select ROW_NUMBER() OVER() as row, '' as provided_chain, p.lg_chain as matched_chain,
-                    p.clean_addr as provided_address,
-                    p.clean_city as provided_city,
-                    p.state as provided_state,
-                    -- p.zip as provided_zip, 
-                    case when p.isa_match = 'unlikely' then null else p.clean_lg_addr end as matched_address,
-                    case when p.isa_match = 'unlikely' then null else p.clean_lg_city end as matched_city,
-                    case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
-                    case when p.isa_match = 'unlikely' then null else p.lg_zip end as zip, 
-                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id,
-                    case when p.isa_match = 'unlikely' then null else l.lat end as lat,
-                    case when p.isa_match = 'unlikely' then null else l.lon end as lon, 
-                    p.isa_match as isa_match, '' as store_id, 
-                    p.sic_code as raw_sic_code, p.lg_sic_code as raw_lg_sic_code, p.clean_addr as raw_clean_addr,
-                    p.clean_lg_addr as raw_clean_lg_addr, p.clean_city as raw_clean_city, 
-                    p.clean_lg_city as raw_clean_lg_city, p.state as raw_state, p.lg_state as raw_lg_state,
-                    p.zip as raw_zip, p.lg_zip as raw_lg_zip, p.addr_match as raw_addr_match, p.store as raw_store,
-                    p.location_id as raw_location_id, p.ar as raw_ar, p.isa_match as raw_isa_match
-                from {data_set_original}.{table} p
-                left join aggdata.location_geofence l on p.location_id = l.location_id
-                 order by row
-            """
+        """
     else:
         raise NotImplementedError(f'{algorithm} not expected!')
     # query_job = bq_client.query(query, project=project, job_config=job_config)
     logging.warning(f'It will run {query}')
     query_job = bq_client.query(query, project=project)
     query_job.result()
-    _set_table_expiration(data_set_final, destination_table, expiration_days_results_table, bq_client)
+    _set_table_expiration(data_set_final, final_table, expiration_days_results_table, bq_client)
     # Also creates a results table with only non unlikely results
     # job_config = bigquery.QueryJobConfig(destination=f'{project}.{data_set_original}.{table}_result')
     # job_config.write_disposition = job.WriteDisposition.WRITE_TRUNCATE
-    results_table = destination_table + '_result'
+    results_table = final_table + '_result'
     query = f'''CREATE OR REPLACE TABLE {data_set_original}.{results_table} AS
                 SELECT ROW_NUMBER() OVER() as row, a.*
                 from(
-                    select * except(row) from {data_set_final}.{destination_table}
-                                  where isa_match <> 'unlikely'
+                    select * except(row) from {data_set_final}.{final_table}
+                                  where isa_match not in ('unlikely', 'unmatched')
                     order by row
                 )a
                 order by row
@@ -633,8 +587,8 @@ def prepare_results_table(**context):
         credentials, _ = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
         logging.warning(f'log: bq_client obtained, will create final table {preprocessed_table}')
-        _create_final_table(preprocessed_table + '_lm', preprocessed_table, bq_client,
-                            LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, False, has_multiple_chain_id,
+        _create_final_table(preprocessed_table, preprocessed_table + '_lm', preprocessed_table, bq_client,
+                            LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, has_multiple_chain_id,
                             has_multiple_chain_name)
         logging.warning('log: prepare_results ended')
     except Exception as e:
