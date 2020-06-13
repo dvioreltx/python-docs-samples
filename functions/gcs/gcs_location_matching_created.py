@@ -476,6 +476,7 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
             """
     elif algorithm == LMAlgo.CHAIN:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
+                    SELECT * FROM(
                     select ROW_NUMBER() OVER() as row, 
                     -- case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain,
                     p.chain as provided_chain,
@@ -494,10 +495,21 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     case when p.isa_match = 'unlikely' then null else p.lg_lat end as lat, 
                     case when p.isa_match = 'unlikely' then null else p.lg_lon end as lon, 
                     p.isa_match as isa_match, p.store_id as store_id
-                from {data_set_original}.{location_matching_table} p order by row
+                from {data_set_original}.{location_matching_table} p 
+                union all
+                    select o.ppid as row, o.chain_name as provided_chain, '' as matched_chain, 
+                    o.street_address as provided_address, o.city as provided_city, o.state as provided_state,
+                    null as matched_address, null as matched_city, null as matched_state, null as zip, 
+                    null as location_id, null as lat, null as lon, 'unmatched' as isa_match, null as store_id
+                    from {data_set_original}.{original_table} o
+                    where o.ppid not in(
+                        select p.ppid from {data_set_original}.{location_matching_table} p
+                    )
+                 )order by row
             """
     elif algorithm == LMAlgo.SIC_CODE:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
+                    SELECT * FROM(
                     select ROW_NUMBER() OVER() as row, '' as provided_chain, p.lg_chain as matched_chain,
                     p.clean_addr as provided_address,
                     p.clean_city as provided_city,
@@ -514,7 +526,16 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     '' as store_id
                 from {data_set_original}.{location_matching_table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
-                 order by row
+                union all
+                    select o.ppid as row, o.chain_name as provided_chain, '' as matched_chain, 
+                    o.street_address as provided_address, o.city as provided_city, o.state as provided_state,
+                    null as matched_address, null as matched_city, null as matched_state, null as zip, 
+                    null as location_id, null as lat, null as lon, 'unmatched' as isa_match, null as store_id
+                    from {data_set_original}.{original_table} o
+                    where o.ppid not in(
+                        select p.ppid from {data_set_original}.{location_matching_table} p
+                    )
+                 )order by row
         """
     else:
         raise NotImplementedError(f'{algorithm} not expected!')
