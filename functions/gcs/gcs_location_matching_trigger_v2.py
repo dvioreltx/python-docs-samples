@@ -2,6 +2,7 @@ import datetime
 import google.auth
 import pandas as pd
 import pytz
+import base64
 import smtplib
 import traceback
 from email.mime.application import MIMEApplication
@@ -12,6 +13,10 @@ from google.cloud import bigquery
 from google.cloud import bigquery_storage_v1beta1
 from google.cloud import storage
 from os.path import basename
+
+import os
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
@@ -108,21 +113,33 @@ def _sanitize_file_name(file_name):
 
 def _send_mail(mail_from, send_to, subject, body, attachments=None):
     assert isinstance(send_to, list)
-    msg = MIMEMultipart()
-    msg['From'] = mail_from
-    msg['To'] = ','.join(send_to)
-    msg['Subject'] = subject
+    # msg = MIMEMultipart()
+    # msg['From'] = mail_from
+    # msg['To'] = ','.join(send_to)
+    # msg['Subject'] = subject
+    # for attachment in attachments or []:
+    #     with open(attachment, "rb") as fil:
+    #         part = MIMEApplication(fil.read(), Name=basename(attachment))
+    #     part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
+    #     msg.attach(part)
+    # msg.attach(MIMEText(body))
+    # smtp = smtplib.SMTP(mail_server, port=587)
+    # smtp.starttls()
+    # smtp.login(mail_user, mail_password)
+    # smtp.sendmail(mail_from, send_to, msg.as_string())
+    # smtp.close()
+    message = Mail(from_email='data-eng@inmarket.com', to_emails=f'{send_to[0]}', subject=subject, html_content=body)
     for attachment in attachments or []:
-        with open(attachment, "rb") as fil:
-            part = MIMEApplication(fil.read(), Name=basename(attachment))
-        part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
-        msg.attach(part)
-    msg.attach(MIMEText(body))
-    smtp = smtplib.SMTP(mail_server, port=587)
-    smtp.starttls()
-    smtp.login(mail_user, mail_password)
-    smtp.sendmail(mail_from, send_to, msg.as_string())
-    smtp.close()
+        with open(attachment, "rb") as f:
+            data = f.read()
+            f.close()
+            encoded_file = base64.b64encode(data).decode()
+            attached_file = Attachment(FileContent(encoded_file), FileName(basename(attachment)), None,
+                                       Disposition('attachment'))
+        message.add_attachment(attached_file)
+    sg = SendGridAPIClient('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')
+    response = sg.send(message)
+    logging.warning(f'Result: {response.status_code}')
 
 
 def _verify_fields(columns, validation_fields):
