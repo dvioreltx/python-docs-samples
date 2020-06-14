@@ -7,9 +7,10 @@ from enum import Enum
 import traceback
 import smtplib
 import pytz
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+# from sendgrid import SendGridAPIClient
+# from sendgrid.helpers.mail import Mail
 from airflow import DAG
+from airflow.operators.email_operator import EmailOperator
 from airflow.operators.python_operator import PythonOperator
 import google.auth
 from google.cloud import bigquery
@@ -87,7 +88,7 @@ class LMAlgo(Enum):
 #     smtp.login(mail_user, mail_password)
 #     smtp.sendmail(mail_from, send_to, msg.as_string())
 #     smtp.close()
-def _send_mail(mail_from, send_to, subject, body, attachments=None):
+def _send_mail(context, mail_from, send_to, subject, body, attachments=None):
     assert isinstance(send_to, list)
     # msg = MIMEMultipart()
     # msg['From'] = mail_from
@@ -104,18 +105,27 @@ def _send_mail(mail_from, send_to, subject, body, attachments=None):
     # smtp.login(mail_user, mail_password)
     # smtp.sendmail(mail_from, send_to, msg.as_string())
     # smtp.close()
-    message = Mail(from_email='data-eng@inmarket.com', to_emails=f'{send_to[0]}', subject=subject, html_content=body)
-    for attachment in attachments or []:
-        with open(attachment, "rb") as f:
-            data = f.read()
-            f.close()
-            encoded_file = base64.b64encode(data).decode()
-            # attached_file = Attachment(FileContent(encoded_file), FileName(basename(attachment)), None,
-            #                           Disposition('attachment'))
-        # message.add_attachment(attached_file)
-    sg = SendGridAPIClient('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')
-    response = sg.send(message)
-    logging.warning(f'Result: {response.status_code}')
+    # message = Mail(from_email='data-eng@inmarket.com', to_emails=f'{send_to[0]}', subject=subject, html_content=body)
+
+    # for attachment in attachments or []:
+    #     with open(attachment, "rb") as f:
+    #         data = f.read()
+    #         f.close()
+    #         encoded_file = base64.b64encode(data).decode()
+    #         # attached_file = Attachment(FileContent(encoded_file), FileName(basename(attachment)), None,
+    #         #                           Disposition('attachment'))
+    #     # message.add_attachment(attached_file)
+    #sg = SendGridAPIClient('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')
+    #response = sg.send(message)
+    #logging.warning(f'Result: {response.status_code}')
+    email_op = EmailOperator(
+        task_id='send_email',
+        to=send_to[0],
+        subject=subject,
+        html_content=body,
+        files=attachments,
+    )
+    email_op.execute(context)
 
 
 def send_email_results(**context):
@@ -147,7 +157,7 @@ def send_email_results(**context):
     file_name_email = original_file_name[original_file_name.index('/') + 1:]
     if '.' in file_name_email:
         file_name_email = file_name_email[:file_name_email.index('.')]
-    _send_mail(mail_from, [destination_email], f'{file_name_email} matched locations ',
+    _send_mail(context, mail_from, [destination_email], f'{file_name_email} matched locations ',
                'Hello,\n\nPlease see your location results attached. '
                f'You can check the complete results in BigQuery - {data_set_final}.{preprocessed_table};',
                [temp_local_file])
