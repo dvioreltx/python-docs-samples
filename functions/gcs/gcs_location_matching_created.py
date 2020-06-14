@@ -2,10 +2,13 @@ import datetime
 
 import logging
 import os
+import base64
 from enum import Enum
 import traceback
 import smtplib
 import pytz
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 from airflow import DAG
 from airflow.operators.python_operator import PythonOperator
 import google.auth
@@ -64,26 +67,55 @@ class LMAlgo(Enum):
     SIC_CODE = 2
 
 
+# def _send_mail(mail_from, send_to, subject, body, attachments=None):
+#     assert isinstance(send_to, list)
+#     msg = MIMEMultipart()
+#     msg['From'] = mail_from
+#     msg['To'] = ','.join(send_to)
+#     msg['Subject'] = subject
+#     for attachment in attachments or []:
+#         with open(attachment, "rb") as fil:
+#             part = MIMEApplication(
+#                 fil.read(),
+#                 Name=basename(attachment)
+#             )
+#         part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
+#         msg.attach(part)
+#     msg.attach(MIMEText(body))
+#     smtp = smtplib.SMTP(mail_server, port=587)
+#     smtp.starttls()
+#     smtp.login(mail_user, mail_password)
+#     smtp.sendmail(mail_from, send_to, msg.as_string())
+#     smtp.close()
 def _send_mail(mail_from, send_to, subject, body, attachments=None):
     assert isinstance(send_to, list)
-    msg = MIMEMultipart()
-    msg['From'] = mail_from
-    msg['To'] = ','.join(send_to)
-    msg['Subject'] = subject
+    # msg = MIMEMultipart()
+    # msg['From'] = mail_from
+    # msg['To'] = ','.join(send_to)
+    # msg['Subject'] = subject
+    # for attachment in attachments or []:
+    #     with open(attachment, "rb") as fil:
+    #         part = MIMEApplication(fil.read(), Name=basename(attachment))
+    #     part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
+    #     msg.attach(part)
+    # msg.attach(MIMEText(body))
+    # smtp = smtplib.SMTP(mail_server, port=587)
+    # smtp.starttls()
+    # smtp.login(mail_user, mail_password)
+    # smtp.sendmail(mail_from, send_to, msg.as_string())
+    # smtp.close()
+    message = Mail(from_email='data-eng@inmarket.com', to_emails=f'{send_to[0]}', subject=subject, html_content=body)
     for attachment in attachments or []:
-        with open(attachment, "rb") as fil:
-            part = MIMEApplication(
-                fil.read(),
-                Name=basename(attachment)
-            )
-        part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
-        msg.attach(part)
-    msg.attach(MIMEText(body))
-    smtp = smtplib.SMTP(mail_server, port=587)
-    smtp.starttls()
-    smtp.login(mail_user, mail_password)
-    smtp.sendmail(mail_from, send_to, msg.as_string())
-    smtp.close()
+        with open(attachment, "rb") as f:
+            data = f.read()
+            f.close()
+            encoded_file = base64.b64encode(data).decode()
+            # attached_file = Attachment(FileContent(encoded_file), FileName(basename(attachment)), None,
+            #                           Disposition('attachment'))
+        # message.add_attachment(attached_file)
+    sg = SendGridAPIClient('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')
+    response = sg.send(message)
+    logging.warning(f'Result: {response.status_code}')
 
 
 def send_email_results(**context):
