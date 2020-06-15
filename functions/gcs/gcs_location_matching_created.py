@@ -336,7 +336,7 @@ insert into stage1
 with 
  combined as (
    select * from sample a left join location_geofence b 
-    on {'lg_zip = zip' if has_zip else 'lg_clean_city = clean_city' }
+    on {'lg_zip = zip' if has_zip else 'clean_city = clean_lg_city' }
  ),
  chain_match_scores as (
    select *
