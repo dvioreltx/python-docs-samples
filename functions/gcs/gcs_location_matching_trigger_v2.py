@@ -517,8 +517,9 @@ def process_location_matching(data, context):
         logging.exception(f'Unexpected error: {e}. Message: {traceback.format_exc()}. File: {data["name"]}')
         if send_email_on_error:
             try:
-                _send_mail(mail_from, email_error, 'location_matching tool error',
-                           f'Error processing location matching: {traceback.format_exc()}. File: {data["name"]}')
+                _send_mail(mail_from, email_error, f'Location Matching Tool error '
+                                                   f'{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}',
+                           f'Error processing location matching: {traceback.format_exc()}.<br />File: {data["name"]}')
             except Exception as e1:
                 logging.exception(f'Unexpected error sending email {e1}: {traceback.format_exc()}')
         if fail_on_error:

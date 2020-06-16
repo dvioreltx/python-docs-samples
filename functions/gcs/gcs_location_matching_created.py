@@ -498,7 +498,7 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     case when p.isa_match = 'unlikely' then null else p.clean_lg_city end as matched_city,
                     case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
                     case when p.isa_match = 'unlikely' then null else p.lg_zip end as zip, 
-                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id,
+                    case when p.isa_match = 'unlikely' then null else cast(p.location_id as string) end as location_id,
                     case when p.isa_match = 'unlikely' then null else l.lat end as lat,
                     case when p.isa_match = 'unlikely' then null else l.lon end as lon,
                     p.isa_match as isa_match, 
@@ -519,7 +519,7 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
     elif algorithm == LMAlgo.CHAIN:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                     SELECT * FROM(
-                    select ROW_NUMBER() OVER() as row, 
+                    select p.ppid as row, 
                     -- case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain,
                     p.chain as provided_chain,
                     -- case when p.isa_match = 'unlikely' then p.addr else p.lg_addr end as address, 
@@ -533,7 +533,7 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     case when p.isa_match = 'unlikely' then null else p.lg_city end as matched_city,
                     case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
                     p.zip as zip, 
-                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id, 
+                    case when p.isa_match = 'unlikely' then null else cast(p.location_id as string) end as location_id, 
                     case when p.isa_match = 'unlikely' then null else p.lg_lat end as lat, 
                     case when p.isa_match = 'unlikely' then null else p.lg_lon end as lon, 
                     p.isa_match as isa_match, p.store_id as store_id
@@ -552,7 +552,7 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
     elif algorithm == LMAlgo.SIC_CODE:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                     SELECT * FROM(
-                    select ROW_NUMBER() OVER() as row, '' as provided_chain, p.lg_chain as matched_chain,
+                    select p.ppid as row, '' as provided_chain, p.lg_chain as matched_chain,
                     p.clean_addr as provided_address,
                     p.clean_city as provided_city,
                     p.state as provided_state,
@@ -561,7 +561,7 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     case when p.isa_match = 'unlikely' then null else p.clean_lg_city end as matched_city,
                     case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
                     case when p.isa_match = 'unlikely' then null else p.lg_zip end as zip, 
-                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id,
+                    case when p.isa_match = 'unlikely' then null else cast(p.location_id as string) end as location_id,
                     case when p.isa_match = 'unlikely' then null else l.lat end as lat,
                     case when p.isa_match = 'unlikely' then null else l.lon end as lon,
                     p.isa_match as isa_match, 
