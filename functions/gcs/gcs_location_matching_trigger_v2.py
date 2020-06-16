@@ -477,7 +477,6 @@ def process_location_matching(data, context):
             if len(queried_df.index) > 0:
                 has_multiple_chain_id = True
         if 'chain name' in raw_data.columns:
-            # TODO: set a different separator
             queried_df = raw_data[raw_data['chain name'].str.contains(';', na=False)]
             if len(queried_df.index) > 0:
                 has_multiple_chain_name = True
@@ -515,18 +514,18 @@ def process_location_matching(data, context):
             source_bucket.delete_blob(from_blob.name)
         logging.warning(f'Process finished for {file_full_name}')
     except Exception as e:
-        logging.exception(f'Unexpected error: {e}. Message: {traceback.format_exc()}')
+        logging.exception(f'Unexpected error: {e}. Message: {traceback.format_exc()}. File: {data["name"]}')
         if send_email_on_error:
             try:
                 _send_mail(mail_from, email_error, 'location_matching tool error',
-                           f'Error processing location matching: {traceback.format_exc()}')
+                           f'Error processing location matching: {traceback.format_exc()}. File: {data["name"]}')
             except Exception as e1:
                 logging.exception(f'Unexpected error sending email {e1}: {traceback.format_exc()}')
         if fail_on_error:
             raise e
 
 
-process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
+# process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/chain id _ name both___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip___no_mv_gcs.txt'}, None)
 # process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated___no_mv_gcs.txt'}, None)
