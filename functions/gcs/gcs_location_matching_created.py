@@ -502,7 +502,7 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     case when p.isa_match = 'unlikely' then null else l.lat end as lat,
                     case when p.isa_match = 'unlikely' then null else l.lon end as lon,
                     p.isa_match as isa_match, 
-                    '' as store_id
+                    ROW_NUMBER() OVER() as store_id
                 from {data_set_original}.{location_matching_table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
                 union all
@@ -565,7 +565,7 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     case when p.isa_match = 'unlikely' then null else l.lat end as lat,
                     case when p.isa_match = 'unlikely' then null else l.lon end as lon,
                     p.isa_match as isa_match, 
-                    '' as store_id
+                    ROW_NUMBER() OVER() as store_id
                 from {data_set_original}.{location_matching_table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
                 union all
