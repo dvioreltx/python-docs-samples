@@ -561,6 +561,7 @@ def execute_location_matching(**context):
         logging.warning(f'log: location_matching ended in table {location_matching_table}')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
+        raise e
 
 
 def prepare_results_table(**context):
@@ -584,6 +585,7 @@ def prepare_results_table(**context):
         logging.warning('log: prepare_results ended')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
+        raise e
 
 
 def delete_temp_data(**context):
