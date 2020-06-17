@@ -3,20 +3,15 @@ import google.auth
 import pandas as pd
 import pytz
 import base64
-import smtplib
 import traceback
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from enum import Enum
 from google.cloud import bigquery
 from google.cloud import bigquery_storage_v1beta1
 from google.cloud import storage
 from os.path import basename
 
-import os
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, Disposition
 
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
@@ -113,21 +108,6 @@ def _sanitize_file_name(file_name):
 
 def _send_mail(mail_from, send_to, subject, body, attachments=None):
     assert isinstance(send_to, list)
-    # msg = MIMEMultipart()
-    # msg['From'] = mail_from
-    # msg['To'] = ','.join(send_to)
-    # msg['Subject'] = subject
-    # for attachment in attachments or []:
-    #     with open(attachment, "rb") as fil:
-    #         part = MIMEApplication(fil.read(), Name=basename(attachment))
-    #     part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
-    #     msg.attach(part)
-    # msg.attach(MIMEText(body))
-    # smtp = smtplib.SMTP(mail_server, port=587)
-    # smtp.starttls()
-    # smtp.login(mail_user, mail_password)
-    # smtp.sendmail(mail_from, send_to, msg.as_string())
-    # smtp.close()
     message = Mail(from_email='data-eng@inmarket.com', to_emails=f'{send_to[0]}', subject=subject, html_content=body)
     for attachment in attachments or []:
         with open(attachment, "rb") as f:
@@ -527,25 +507,3 @@ def process_location_matching(data, context):
 
 
 # process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/chain id _ name both___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/address full - no zip_curated_good___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/simple list 2.with.point!$%^&_-+=-, ___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/simple_list_ch___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/sic code match___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_one_row_addr.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/simple list 2_reduced_id___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/Matching_list_nozip___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/Matching_list___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/address full with both chain n sic code___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/address full _address_state_city_zip)___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/address full (no zip)___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new_test___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/multiple_chain_ids_new___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue_6___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/Multiple chain ids___no_mv_gcs.txt'}, None)
-# process_location_matching({'name': 'dviorel@inmarket.com/walmart_list_with_match_issue___no_mv_gcs.txt'}, None)
-# _send_mail('dviorel@inmarket.com', ['dviorel@inmarket.com'], 'My test', 'The body')

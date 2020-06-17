@@ -2,26 +2,17 @@ import datetime
 
 import logging
 import os
-import base64
 from enum import Enum
 import traceback
-import smtplib
 import pytz
-# from sendgrid import SendGridAPIClient
-# from sendgrid.helpers.mail import Mail
 from airflow import DAG
 from airflow.operators.email_operator import EmailOperator
 from airflow.operators.python_operator import PythonOperator
 import google.auth
 from google.cloud import bigquery
 from google.cloud import storage
-from os.path import basename
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
 # Config variables
-
 default_args = {
     'owner': 'danny',
     'depends_on_past': False,
@@ -68,56 +59,8 @@ class LMAlgo(Enum):
     SIC_CODE = 2
 
 
-# def _send_mail(mail_from, send_to, subject, body, attachments=None):
-#     assert isinstance(send_to, list)
-#     msg = MIMEMultipart()
-#     msg['From'] = mail_from
-#     msg['To'] = ','.join(send_to)
-#     msg['Subject'] = subject
-#     for attachment in attachments or []:
-#         with open(attachment, "rb") as fil:
-#             part = MIMEApplication(
-#                 fil.read(),
-#                 Name=basename(attachment)
-#             )
-#         part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
-#         msg.attach(part)
-#     msg.attach(MIMEText(body))
-#     smtp = smtplib.SMTP(mail_server, port=587)
-#     smtp.starttls()
-#     smtp.login(mail_user, mail_password)
-#     smtp.sendmail(mail_from, send_to, msg.as_string())
-#     smtp.close()
 def _send_mail(context, mail_from, send_to, subject, body, attachments=None):
     assert isinstance(send_to, list)
-    # msg = MIMEMultipart()
-    # msg['From'] = mail_from
-    # msg['To'] = ','.join(send_to)
-    # msg['Subject'] = subject
-    # for attachment in attachments or []:
-    #     with open(attachment, "rb") as fil:
-    #         part = MIMEApplication(fil.read(), Name=basename(attachment))
-    #     part['Content-Disposition'] = 'attachment; filename="%s"' % basename(attachment)
-    #     msg.attach(part)
-    # msg.attach(MIMEText(body))
-    # smtp = smtplib.SMTP(mail_server, port=587)
-    # smtp.starttls()
-    # smtp.login(mail_user, mail_password)
-    # smtp.sendmail(mail_from, send_to, msg.as_string())
-    # smtp.close()
-    # message = Mail(from_email='data-eng@inmarket.com', to_emails=f'{send_to[0]}', subject=subject, html_content=body)
-
-    # for attachment in attachments or []:
-    #     with open(attachment, "rb") as f:
-    #         data = f.read()
-    #         f.close()
-    #         encoded_file = base64.b64encode(data).decode()
-    #         # attached_file = Attachment(FileContent(encoded_file), FileName(basename(attachment)), None,
-    #         #                           Disposition('attachment'))
-    #     # message.add_attachment(attached_file)
-    #sg = SendGridAPIClient('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')
-    #response = sg.send(message)
-    #logging.warning(f'Result: {response.status_code}')
     email_op = EmailOperator(
         task_id='send_email',
         to=send_to[0],
@@ -140,7 +83,6 @@ def send_email_results(**context):
     logging.warning(f'log: send_email_results 02 desturi {destination_uri}')
     logging.info(f'Writing final CSV to {destination_uri} ...{original_file_name}')
     results_table = preprocessed_table + '_result'
-    # data_set_ref = bigquery.DatasetReference(project, data_set_final)
     data_set_ref = bigquery.DatasetReference(project, data_set_original)
     table_ref = data_set_ref.table(results_table)
     extract_job = bq_client.extract_table(table_ref, destination_uri)
@@ -481,8 +423,6 @@ library=['gs://javascript_lib/addr_functions.js']
 
 def _create_final_table(original_table, location_matching_table, final_table, bq_client, algorithm,
                         is_multiple_chain_id, is_multiple_chain_name):
-    # job_config = bigquery.QueryJobConfig(destination=f'{project}.{data_set_final}.{destination_table}')
-    # job_config.write_disposition = job.WriteDisposition.WRITE_TRUNCATE
     query = None
     if is_multiple_chain_id or is_multiple_chain_name:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
@@ -577,21 +517,17 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
         """
     else:
         raise NotImplementedError(f'{algorithm} not expected!')
-    # query_job = bq_client.query(query, project=project, job_config=job_config)
     logging.warning(f'It will run {query}')
     query_job = bq_client.query(query, project=project)
     query_job.result()
     _set_table_expiration(data_set_final, final_table, expiration_days_results_table, bq_client)
     # Also creates a results table with only non unlikely results
-    # job_config = bigquery.QueryJobConfig(destination=f'{project}.{data_set_original}.{table}_result')
-    # job_config.write_disposition = job.WriteDisposition.WRITE_TRUNCATE
     results_table = final_table + '_result'
     query = f'''CREATE OR REPLACE TABLE {data_set_original}.{results_table} AS
                     select * from {data_set_final}.{final_table}
                         where isa_match not in ('unlikely', 'unmatched')
                     order by store_id
         '''
-    # query_job = bq_client.query(query, project=project, job_config=job_config)
     query_job = bq_client.query(query, project=project)
     query_job.result()
 
