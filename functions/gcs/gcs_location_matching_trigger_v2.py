@@ -31,17 +31,13 @@ send_email_on_error = True
 data_set_original = "location_matching_file"
 
 bucket = 'location_matching'
-mail_from = 'dviorel@inmarket.com'
 email_error = ['dviorel@inmarket.com']
-mail_user = 'dviorel@inmarket.com'
-mail_password = 'ftjhmrukjcdtcpft'
 expiration_days_original_table = 7
 expiration_days_results_table = 30
 
 logging.basicConfig(level=logging.DEBUG)
 
 fail_on_error = False
-mail_server = 'smtp.gmail.com'
 project = "cptsrewards-hrd"
 url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
 query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
@@ -106,7 +102,7 @@ def _sanitize_file_name(file_name):
     return file_name
 
 
-def _send_mail(mail_from, send_to, subject, body, attachments=None):
+def _send_mail(send_to, subject, body, attachments=None):
     assert isinstance(send_to, list)
     message = Mail(from_email='data-eng@inmarket.com', to_emails=f'{send_to[0]}', subject=subject, html_content=body)
     for attachment in attachments or []:
@@ -453,11 +449,13 @@ def process_location_matching(data, context):
         has_multiple_chain_id = False
         has_multiple_chain_name = False
         if 'chain id' in raw_data.columns:
-            queried_df = raw_data[raw_data['chain id'].str.contains(',', na=False)]
+            # queried_df = raw_data[raw_data['chain id'].str.contains(',', na=False)]
+            queried_df = raw_data[raw_data['chain id'].astype(str).str.contains(',', na=False)]
             if len(queried_df.index) > 0:
                 has_multiple_chain_id = True
         if 'chain name' in raw_data.columns:
-            queried_df = raw_data[raw_data['chain name'].str.contains(';', na=False)]
+            # queried_df = raw_data[raw_data['chain name'].str.contains(';', na=False)]
+            queried_df = raw_data[raw_data['chain name'].astype(str).str.contains(';', na=False)]
             if len(queried_df.index) > 0:
                 has_multiple_chain_name = True
         if should_add_state_from_zip:
@@ -497,8 +495,8 @@ def process_location_matching(data, context):
         logging.exception(f'Unexpected error: {e}. Message: {traceback.format_exc()}. File: {data["name"]}')
         if send_email_on_error:
             try:
-                _send_mail(mail_from, email_error, f'Location Matching Tool error '
-                                                   f'{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}',
+                _send_mail(email_error, f'Location Matching Tool error '
+                                        f'{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}',
                            f'Error processing location matching: {traceback.format_exc()}.<br />File: {data["name"]}')
             except Exception as e1:
                 logging.exception(f'Unexpected error sending email {e1}: {traceback.format_exc()}')
@@ -506,4 +504,4 @@ def process_location_matching(data, context):
             raise e
 
 
-# process_location_matching({'name': 'dviorel@inmarket.com/simple_list___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/chain_id_name_both___no_mv_gcs.txt'}, None)
