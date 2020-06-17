@@ -462,7 +462,7 @@ def process_location_matching(data, context):
         pre_processed_data['lon'] = None
         if 'address_full' in pre_processed_data.columns:
             pre_processed_data = pre_processed_data.drop(['address_full'], axis=1)
-        pre_processed_data.insert(0, 'ppid', range(1, 1 + len(pre_processed_data)))
+        pre_processed_data.insert(0, 'store_id', range(1, 1 + len(pre_processed_data)))
         preprocessed_table = file_name.lower()
         logging.warning(f'Will write to table: {preprocessed_table} ...{original_name}')
         pre_processed_data.to_gbq(f'{data_set_original}.{preprocessed_table}', project_id=project, progress_bar=False,

@@ -193,7 +193,7 @@ library=['gs://javascript_lib/addr_functions.js']
 CREATE OR REPLACE TABLE {data_set_original}.{destination_table} AS
 with
 sample as (
-  select  ppid, {field}, clean_addr,
+  select  store_id, {field}, clean_addr,
           clean_city, state, zip,
           concat({field}, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store
     from `{data_set_original}.{table}`
@@ -236,7 +236,7 @@ end isa_match
 from (
   select *, row_number() over (partition by store order by addr_match desc, clean_lg_addr) ar
   from (
-    select ppid, lg_chain_id, lg_chain, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, 
+    select store_id, lg_chain_id, lg_chain, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, 
             lg_state, zip, lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, location_id, 
             store
     from sample_lg_join
@@ -306,7 +306,6 @@ from `aggdata.location_geofence_cleaned` a
 join our_states b on a.state = b.state
 ;
 create temp table stage1 (
-ppid            int64,
 store_id 	     int64,
 isa_match 	   string,
 match_score    float64,	
@@ -393,9 +392,8 @@ with
    from sorted_scores
    where match_rank = 1
  )
-select ppid, row_number() over () store_id, 
-  isa_match, round(100-match_score,1) match_score, grade, 
-  * except (ppid, grade, isa_match, match_score, match_rank)
+select store_id, isa_match, round(100-match_score,1) match_score, grade, 
+  * except (store_id, grade, isa_match, match_score, match_rank)
 from best_matches
 ;  
 end;
@@ -422,7 +420,7 @@ library=['gs://javascript_lib/addr_functions.js']
     sample as (
       select *, concat(sic_code, ',', ifnull(clean_addr, ''), ',', ifnull(clean_city,''), ',', ifnull(state,'')) store 
       from (
-        select ppid, cast(sic_code as string) sic_code, clean_addr, 
+        select store_id, cast(sic_code as string) sic_code, clean_addr, 
           clean_city, state, zip
         from `{data_set_original}.{table}`
       )
@@ -466,7 +464,7 @@ library=['gs://javascript_lib/addr_functions.js']
     from (
       select *, row_number() over (partition by store order by addr_match desc, clean_lg_addr) ar
       from (
-        select ppid, lg_chain, sic_code, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, 
+        select store_id, lg_chain, sic_code, lg_sic_code, clean_addr, clean_lg_addr, clean_city, clean_lg_city, state, 
             lg_state, zip, lg_zip, strmatchrate(clean_addr, clean_lg_addr, 'addr', 'sic_code') addr_match, store, 
             location_id
         from sample_lg_join 
@@ -489,7 +487,7 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
     if is_multiple_chain_id or is_multiple_chain_name:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                 SELECT * FROM(
-                    select p.ppid as store_id, '' as provided_chain, p.lg_chain as matched_chain,
+                    select p.store_id as store_id, '' as provided_chain, p.lg_chain as matched_chain,
                     p.clean_addr as provided_address,
                     p.clean_city as provided_city,
                     p.state as provided_state,
@@ -498,27 +496,27 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     case when p.isa_match = 'unlikely' then null else p.clean_lg_city end as matched_city,
                     case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
                     case when p.isa_match = 'unlikely' then null else p.lg_zip end as zip, 
-                    case when p.isa_match = 'unlikely' then null else cast(p.location_id as string) end as location_id,
+                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id,
                     case when p.isa_match = 'unlikely' then null else l.lat end as lat,
                     case when p.isa_match = 'unlikely' then null else l.lon end as lon,
                     p.isa_match as isa_match
                 from {data_set_original}.{location_matching_table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
                 union all
-                    select o.ppid as store_id, o.chain_name as provided_chain, '' as matched_chain, 
+                    select o.store_id as store_id, o.chain_name as provided_chain, '' as matched_chain, 
                     o.street_address as provided_address, o.city as provided_city, o.state as provided_state,
                     null as matched_address, null as matched_city, null as matched_state, null as zip, 
                     null as location_id, null as lat, null as lon, 'unmatched' as isa_match
                     from {data_set_original}.{original_table} o
-                    where o.ppid not in(
-                        select p.ppid from {data_set_original}.{location_matching_table} p
+                    where o.store_id not in(
+                        select p.store_id from {data_set_original}.{location_matching_table} p
                     )
                  )order by store_id
             """
     elif algorithm == LMAlgo.CHAIN:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                     SELECT * FROM(
-                    select p.ppid as store_id, 
+                    select p.store_id as store_id, 
                     -- case when p.isa_match = 'unlikely' then p.chain else p.lg_chain end as chain,
                     p.chain as provided_chain,
                     -- case when p.isa_match = 'unlikely' then p.addr else p.lg_addr end as address, 
@@ -532,26 +530,26 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     case when p.isa_match = 'unlikely' then null else p.lg_city end as matched_city,
                     case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
                     p.zip as zip, 
-                    case when p.isa_match = 'unlikely' then null else cast(p.location_id as string) end as location_id, 
+                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id, 
                     case when p.isa_match = 'unlikely' then null else p.lg_lat end as lat, 
                     case when p.isa_match = 'unlikely' then null else p.lg_lon end as lon, 
                     p.isa_match as isa_match
                 from {data_set_original}.{location_matching_table} p 
                 union all
-                    select o.ppid as store_id, o.chain_name as provided_chain, '' as matched_chain, 
+                    select o.store_id as store_id, o.chain_name as provided_chain, '' as matched_chain, 
                     o.street_address as provided_address, o.city as provided_city, o.state as provided_state,
                     null as matched_address, null as matched_city, null as matched_state, null as zip, 
                     null as location_id, null as lat, null as lon, 'unmatched' as isa_match
                     from {data_set_original}.{original_table} o
-                    where o.ppid not in(
-                        select p.ppid from {data_set_original}.{location_matching_table} p
+                    where o.store_id not in(
+                        select p.store_id from {data_set_original}.{location_matching_table} p
                     )
                  )order by store_id
             """
     elif algorithm == LMAlgo.SIC_CODE:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                     SELECT * FROM(
-                    select p.ppid as store_id, '' as provided_chain, p.lg_chain as matched_chain,
+                    select p.store_id as store_id, '' as provided_chain, p.lg_chain as matched_chain,
                     p.clean_addr as provided_address,
                     p.clean_city as provided_city,
                     p.state as provided_state,
@@ -560,20 +558,20 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     case when p.isa_match = 'unlikely' then null else p.clean_lg_city end as matched_city,
                     case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
                     case when p.isa_match = 'unlikely' then null else p.lg_zip end as zip, 
-                    case when p.isa_match = 'unlikely' then null else cast(p.location_id as string) end as location_id,
+                    case when p.isa_match = 'unlikely' then null else p.location_id end as location_id,
                     case when p.isa_match = 'unlikely' then null else l.lat end as lat,
                     case when p.isa_match = 'unlikely' then null else l.lon end as lon,
                     p.isa_match as isa_match
                 from {data_set_original}.{location_matching_table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
                 union all
-                    select o.ppid as store_id, o.chain_name as provided_chain, '' as matched_chain, 
+                    select o.store_id as store_id, o.chain_name as provided_chain, '' as matched_chain, 
                     o.street_address as provided_address, o.city as provided_city, o.state as provided_state,
                     null as matched_address, null as matched_city, null as matched_state, null as zip, 
                     null as location_id, null as lat, null as lon, 'unmatched' as isa_match
                     from {data_set_original}.{original_table} o
-                    where o.ppid not in(
-                        select p.ppid from {data_set_original}.{location_matching_table} p
+                    where o.store_id not in(
+                        select p.store_id from {data_set_original}.{location_matching_table} p
                     )
                  )order by store_id
         """
