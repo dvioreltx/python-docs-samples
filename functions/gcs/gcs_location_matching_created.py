@@ -34,24 +34,14 @@ dag = DAG(
 )
 
 # Define functions and query strings
-
 delete_intermediate_tables = False
-send_email_on_error = True
 data_set_original = "location_matching_file"
 data_set_final = "location_matching_match"
-bucket = 'location_matching'  # TODOne: Volver a poner este bucket
-# bucket = 'dannyv'
-mail_from = 'dviorel@inmarket.com'
-email_error = ['dviorel@inmarket.com']
-mail_user = 'dviorel@inmarket.com'
-mail_password = 'ftjhmrukjcdtcpft'
+bucket = 'location_matching'
 expiration_days_results_table = 30
-
-logging.basicConfig(level=logging.DEBUG)
-
-mail_server = 'smtp.gmail.com'
 project = "cptsrewards-hrd"
 url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
+logging.basicConfig(level=logging.DEBUG)
 
 
 class LMAlgo(Enum):
@@ -59,7 +49,7 @@ class LMAlgo(Enum):
     SIC_CODE = 2
 
 
-def _send_mail(context, mail_from, send_to, subject, body, attachments=None):
+def _send_mail(context, send_to, subject, body, attachments=None):
     assert isinstance(send_to, list)
     email_op = EmailOperator(
         task_id='send_email',
@@ -99,7 +89,7 @@ def send_email_results(**context):
     file_name_email = original_file_name[original_file_name.index('/') + 1:]
     if '.' in file_name_email:
         file_name_email = file_name_email[:file_name_email.index('.')]
-    _send_mail(context, mail_from, [destination_email], f'{file_name_email} matched locations ',
+    _send_mail(context, [destination_email], f'{file_name_email} matched locations ',
                'Hello,\n\nPlease see your location results attached. '
                f'You can check the complete results in BigQuery - {data_set_final}.{preprocessed_table};',
                [temp_local_file])
@@ -427,11 +417,12 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
     if is_multiple_chain_id or is_multiple_chain_name:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                 SELECT * FROM(
-                    select p.store_id as store_id, '' as provided_chain, p.lg_chain as matched_chain,
+                    select p.store_id as store_id, '' as provided_chain, 
                     p.clean_addr as provided_address,
                     p.clean_city as provided_city,
                     p.state as provided_state,
                     -- p.zip as provided_zip, 
+                    p.lg_chain as matched_chain,
                     case when p.isa_match = 'unlikely' then null else p.clean_lg_addr end as matched_address,
                     case when p.isa_match = 'unlikely' then null else p.clean_lg_city end as matched_city,
                     case when p.isa_match = 'unlikely' then null else p.lg_state end as matched_state,
@@ -443,10 +434,10 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                 from {data_set_original}.{location_matching_table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
                 union all
-                    select o.store_id as store_id, o.chain_name as provided_chain, '' as matched_chain, 
+                    select o.store_id as store_id, o.chain_name as provided_chain,  
                     o.street_address as provided_address, o.city as provided_city, o.state as provided_state,
-                    null as matched_address, null as matched_city, null as matched_state, null as zip, 
-                    null as location_id, null as lat, null as lon, 'unmatched' as isa_match
+                    null as matched_chain, null as matched_address, null as matched_city, null as matched_state, 
+                    null as zip, null as location_id, null as lat, null as lon, 'unmatched' as isa_match
                     from {data_set_original}.{original_table} o
                     where o.store_id not in(
                         select p.store_id from {data_set_original}.{location_matching_table} p
@@ -476,10 +467,10 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     p.isa_match as isa_match
                 from {data_set_original}.{location_matching_table} p 
                 union all
-                    select o.store_id as store_id, o.chain_name as provided_chain, '' as matched_chain, 
-                    o.street_address as provided_address, o.city as provided_city, o.state as provided_state,
-                    null as matched_address, null as matched_city, null as matched_state, null as zip, 
-                    null as location_id, null as lat, null as lon, 'unmatched' as isa_match
+                    select o.store_id as store_id, o.chain_name as provided_chain, 
+                    o.street_address as provided_address, o.city as provided_city, o.state as provided_state, 
+                    null as matched_chain, null as matched_address, null as matched_city, null as matched_state, 
+                    null as zip, null as location_id, null as lat, null as lon, 'unmatched' as isa_match
                     from {data_set_original}.{original_table} o
                     where o.store_id not in(
                         select p.store_id from {data_set_original}.{location_matching_table} p
@@ -489,10 +480,11 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
     elif algorithm == LMAlgo.SIC_CODE:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                     SELECT * FROM(
-                    select p.store_id as store_id, '' as provided_chain, p.lg_chain as matched_chain,
+                    select p.store_id as store_id, null as provided_chain, 
                     p.clean_addr as provided_address,
                     p.clean_city as provided_city,
                     p.state as provided_state,
+                    p.lg_chain as matched_chain,
                     -- p.zip as provided_zip, 
                     case when p.isa_match = 'unlikely' then null else p.clean_lg_addr end as matched_address,
                     case when p.isa_match = 'unlikely' then null else p.clean_lg_city end as matched_city,
@@ -505,10 +497,10 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                 from {data_set_original}.{location_matching_table} p
                 left join aggdata.location_geofence l on p.location_id = l.location_id
                 union all
-                    select o.store_id as store_id, o.chain_name as provided_chain, '' as matched_chain, 
+                    select o.store_id as store_id, o.chain_name as provided_chain,  
                     o.street_address as provided_address, o.city as provided_city, o.state as provided_state,
-                    null as matched_address, null as matched_city, null as matched_state, null as zip, 
-                    null as location_id, null as lat, null as lon, 'unmatched' as isa_match
+                    null as matched_chain, null as matched_address, null as matched_city, null as matched_state, 
+                    null as zip, null as location_id, null as lat, null as lon, 'unmatched' as isa_match
                     from {data_set_original}.{original_table} o
                     where o.store_id not in(
                         select p.store_id from {data_set_original}.{location_matching_table} p
