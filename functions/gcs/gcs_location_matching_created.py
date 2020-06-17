@@ -281,10 +281,10 @@ from (
       when length(substr(zip,0,5)) = 4 then concat('0',zip)     
       else substr(zip,0,5)
     end as string) zip,
-    clean_chain, clean_addr, clean_city, ppid
+    clean_chain, clean_addr, clean_city, store_id
   from ( 
     select chain_name chain, street_address  addr, city, state, zip,
-      clean_chain, clean_addr, clean_city, ppid
+      clean_chain, clean_addr, clean_city, store_id
     #####################################
     ###     ENTER INPUT FILE HERE     ###
     #####################################
@@ -301,7 +301,7 @@ create temp table location_geofence as
 select chain_name lg_chain, lat lg_lat, lon lg_lon, 
   addr lg_addr, city lg_city, a.state lg_state, 
   substr(trim(zip),0,5) lg_zip, location_id,
-  clean_chain lg_clean_chain, clean_city lg_clean_city, clean_addr lg_clean_addr
+  clean_chain lg_clean_chain, clean_city clean_lg_city, clean_addr lg_clean_addr
 from `aggdata.location_geofence_cleaned` a 
 join our_states b on a.state = b.state
 ;
@@ -367,7 +367,7 @@ with
    from match_scores 
  ),
  best_matches as (
-   select ppid, chain_match, addr_match, match_score, match_rank, zip, chain, 
+   select store_id, chain_match, addr_match, match_score, match_rank, zip, chain, 
      lg_chain, addr, lg_addr, city, lg_city, state, lg_state, lg_lat, lg_lon, 
      safe_cast(location_id as string) location_id, 
      store, 
