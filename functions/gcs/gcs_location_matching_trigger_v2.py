@@ -346,7 +346,7 @@ def process_location_matching(data, context):
             logging.error(f'{file_full_name} does not belong to a folder')
             return
         destination_email = file_full_name[:file_full_name.index('/')]
-        cf_name = file_full_name[file_full_name.index('/') + 1:]
+        cf_name = original_name[original_name.index('/') + 1:]
         if '@' not in destination_email:
             logging.error(f'{destination_email} is not a valid email ...{original_name}')
             return
@@ -498,6 +498,7 @@ def process_location_matching(data, context):
         data['has_zip'] = has_zip
         data['has_multiple_chain_id'] = has_multiple_chain_id
         data['has_multiple_chain_name'] = has_multiple_chain_name
+        data['file_name'] = cf_name
         _make_iap_request(webserver_url, client_id, method='POST', json={"conf": data})
         storage_client = storage.Client()
         if delete_gcs_files and '___no_mv_gcs' not in file_full_name:

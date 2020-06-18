@@ -49,11 +49,19 @@ class LMAlgo(Enum):
     SIC_CODE = 2
 
 
+def _notify_error_adops(context, email_to, file_name):
+    try:
+        _send_mail(context, email_to, f'Error in Location Matching Tool for “{file_name}”',
+                   f'Unexpected error processing “{file_name}”. Please file an Engineering Support ticket (issue '
+                   f'type —> reporting and analytics) for Data Engineering team to investigate the issue.')
+    except Exception as e:
+        logging.exception(f'Unexpected error sending email {e}: {traceback.format_exc()}')
+
+
 def _send_mail(context, send_to, subject, body, attachments=None):
-    assert isinstance(send_to, list)
     email_op = EmailOperator(
         task_id='send_email',
-        to=send_to[0],
+        to=send_to,
         subject=subject,
         html_content=body,
         files=attachments,
@@ -62,40 +70,43 @@ def _send_mail(context, send_to, subject, body, attachments=None):
 
 
 def send_email_results(**context):
-    logging.warning('log: send_email_results 01')
-    preprocessed_table = context['dag_run'].conf['table']
-    file_name = preprocessed_table
-    original_file_name = context['dag_run'].conf['original_file_name']
-    destination_email = context['dag_run'].conf['destination_email']
-    credentials, _ = google.auth.default(scopes=[url_auth_gcp])
-    bq_client = bigquery.Client(project=project, credentials=credentials)
-    destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
-    logging.warning(f'log: send_email_results 02 desturi {destination_uri}')
-    logging.info(f'Writing final CSV to {destination_uri} ...{original_file_name}')
-    results_table = preprocessed_table + '_result'
-    data_set_ref = bigquery.DatasetReference(project, data_set_original)
-    table_ref = data_set_ref.table(results_table)
-    extract_job = bq_client.extract_table(table_ref, destination_uri)
-    extract_job.result()
-    logging.warning(f'log: send_email_results 03 downloaded in {destination_uri}')
-    storage_client = storage.Client()
-    the_bucket = storage_client.bucket(bucket)
-    file_result = f'results/{destination_email}/{preprocessed_table}.csv'
-    blob = the_bucket.blob(file_result)
-    temp_local_file = f'/tmp/{file_name}.csv'
-    logging.warning(f'log: send_email_results 04 will download in {temp_local_file}')
-    blob.download_to_filename(temp_local_file)
-    logging.warning(f'log: send_email_results 05 downloaded in {temp_local_file}')
-    file_name_email = original_file_name[original_file_name.index('/') + 1:]
-    if '.' in file_name_email:
-        file_name_email = file_name_email[:file_name_email.index('.')]
-    _send_mail(context, [destination_email], f'{file_name_email} matched locations ',
-               'Hello,\n\nPlease see your location results attached. '
-               f'You can check the complete results in BigQuery - {data_set_final}.{preprocessed_table};',
-               [temp_local_file])
-    logging.warning(f'log: send_email_results 06 email sended')
-    os.remove(temp_local_file)
-    the_bucket.delete_blob(file_result)
+    try:
+        logging.warning('log: send_email_results 01')
+        preprocessed_table = context['dag_run'].conf['table']
+        file_name = preprocessed_table
+        original_file_name = context['dag_run'].conf['original_file_name']
+        file_name_email = context['dag_run'].conf['file_name']
+        destination_email = context['dag_run'].conf['destination_email']
+        credentials, _ = google.auth.default(scopes=[url_auth_gcp])
+        bq_client = bigquery.Client(project=project, credentials=credentials)
+        destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
+        logging.warning(f'log: send_email_results 02 desturi {destination_uri}')
+        logging.info(f'Writing final CSV to {destination_uri} ...{original_file_name}')
+        results_table = preprocessed_table + '_result'
+        data_set_ref = bigquery.DatasetReference(project, data_set_original)
+        table_ref = data_set_ref.table(results_table)
+        extract_job = bq_client.extract_table(table_ref, destination_uri)
+        extract_job.result()
+        logging.warning(f'log: send_email_results 03 downloaded in {destination_uri}')
+        storage_client = storage.Client()
+        the_bucket = storage_client.bucket(bucket)
+        file_result = f'results/{destination_email}/{preprocessed_table}.csv'
+        blob = the_bucket.blob(file_result)
+        temp_local_file = f'/tmp/{file_name}.csv'
+        logging.warning(f'log: send_email_results 04 will download in {temp_local_file}')
+        blob.download_to_filename(temp_local_file)
+        logging.warning(f'log: send_email_results 05 downloaded in {temp_local_file}')
+        _send_mail(context, destination_email, f'{file_name_email} matched locations ',
+                   'Hello,\n\nPlease see your location results attached. '
+                   f'You can check the complete results in BigQuery - {data_set_final}.{preprocessed_table};',
+                   [temp_local_file])
+        logging.warning(f'log: send_email_results 06 email sended')
+        os.remove(temp_local_file)
+        the_bucket.delete_blob(file_result)
+    except Exception as e:
+        logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
+        _notify_error_adops(context, context['dag_run'].conf['destination_email'], context['dag_run'].conf['file_name'])
+        raise e
 
 
 def _set_table_expiration(dataset, table_name, expiration_days, bq_client):
@@ -553,6 +564,7 @@ def execute_location_matching(**context):
         logging.warning(f'log: location_matching ended in table {location_matching_table}')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
+        _notify_error_adops(context, context['dag_run'].conf['destination_email'], context['dag_run'].conf['file_name'])
         raise e
 
 
@@ -577,6 +589,7 @@ def prepare_results_table(**context):
         logging.warning('log: prepare_results ended')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
+        _notify_error_adops(context, context['dag_run'].conf['destination_email'], context['dag_run'].conf['file_name'])
         raise e
 
 
