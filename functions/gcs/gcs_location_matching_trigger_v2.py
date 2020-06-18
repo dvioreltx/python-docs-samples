@@ -31,7 +31,7 @@ send_email_on_error = True
 data_set_original = "location_matching_file"
 
 bucket = 'location_matching'
-email_error = ['dviorel@inmarket.com']
+email_error = 'dviorel@inmarket.com'
 expiration_days_original_table = 7
 expiration_days_results_table = 30
 
@@ -103,8 +103,8 @@ def _sanitize_file_name(file_name):
 
 
 def _send_mail(send_to, subject, body, attachments=None):
-    assert isinstance(send_to, list)
-    message = Mail(from_email='data-eng@inmarket.com', to_emails=f'{send_to[0]}', subject=subject, html_content=body)
+    logging.info(f'Will send email with title: {subject} to {send_to}')
+    message = Mail(from_email='data-eng@inmarket.com', to_emails=f'{send_to}', subject=subject, html_content=body)
     for attachment in attachments or []:
         with open(attachment, "rb") as f:
             data = f.read()
@@ -317,11 +317,13 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
         address = 'N/A'
         state = 'N/A'
         city = 'N/A'
-        zip_code = 'N/A'
+        zip_code = '0'
     return address, state, city, zip_code
 
 
 def process_location_matching(data, context):
+    destination_email = None
+    cf_name = None
     try:
         logging.debug(f'Started {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
         validation_fields = {'sic code': 'sic_code', 'chain name/chain id': 'chain_name',
@@ -343,11 +345,8 @@ def process_location_matching(data, context):
         if '/' not in file_full_name:
             logging.error(f'{file_full_name} does not belong to a folder')
             return
-        full_result = False
-        if file_full_name.endswith('___test.txt'):
-            logging.warning(f'This is a test petition so we will return full data ...{original_name}')
-            full_result = True
         destination_email = file_full_name[:file_full_name.index('/')]
+        cf_name = file_full_name[file_full_name.index('/') + 1:]
         if '@' not in destination_email:
             logging.error(f'{destination_email} is not a valid email ...{original_name}')
             return
@@ -359,8 +358,16 @@ def process_location_matching(data, context):
         logging.info(f'Email: {destination_email} ...{original_name}')
         try:
             raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='utf-8')
-        except ValueError:
-            raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='iso-8859-1')
+        except Exception:
+            try:
+                raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='iso-8859-1')
+            except Exception as e:
+                logging.error(f'Error reading file, will send email format {e} and exit function: '
+                              f'{traceback.format_exc()}')
+                _send_mail(destination_email, f'File format error in Location Matching Tool for "{cf_name}"',
+                           f'"{cf_name}" is not a valid supported file type. Please verify the file '
+                           f'format is "Tab delimited Text(.txt)" before resubmitting for matching.')
+                return
         credentials, your_project_id = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
         bq_storage_client = bigquery_storage_v1beta1.BigQueryStorageClient(credentials=credentials)
@@ -371,6 +378,13 @@ def process_location_matching(data, context):
         pre_processed_data = raw_data[column_validation_fields].\
             rename(columns=lambda name: name.replace(' ', '_').replace('(', '_').replace(')', '_').replace(',', '_'),
                    inplace=False)
+        if 'chain id' not in raw_data.columns and 'chain name' not in raw_data.columns \
+                and 'sic code' not in raw_data.columns:
+            logging.error(f'File {original_name} doesnt have required columns, will send email.')
+            _send_mail(destination_email, f'Missing required fields error in Location Matching Tool for "{cf_name}"',
+                       f'File "{cf_name}" must contain at least one of the following required fields - chain id, '
+                       f'chain name or sic code. Please add the required field before resubmitting for matching.')
+            return
         df_states = (bq_client.query(query_states).result().to_dataframe(bqstorage_client=bq_storage_client))
         # Complete columns not present in file
         should_add_state_from_zip = 'state' not in pre_processed_data.columns and 'zip' in pre_processed_data.columns
@@ -393,6 +407,7 @@ def process_location_matching(data, context):
         for key in validation_fields:
             if validation_fields[key] not in pre_processed_data:
                 pre_processed_data[validation_fields[key]] = None
+        pre_processed_data = pre_processed_data.astype({'zip': 'str'})
         if 'address_full__no_zip_' in pre_processed_data.columns or 'address_full' in pre_processed_data.columns \
                 or 'address_full__address_state_city_zip_' in pre_processed_data.columns \
                 or 'address_full__address__state__city__zip_' in pre_processed_data.columns:
@@ -441,6 +456,11 @@ def process_location_matching(data, context):
         pre_processed_data.insert(0, 'store_id', range(1, 1 + len(pre_processed_data)))
         preprocessed_table = file_name.lower()
         logging.warning(f'Will write to table: {preprocessed_table} ...{original_name}')
+        if has_chain and not has_zip and not has_city:
+            _send_mail(destination_email, f'Missing required fields error in Location Matching Tool for “{cf_name}”',
+                       f'File {cf_name} must have at least one of the following fields: zip code or city. Please add '
+                       f'the required field before resubmitting for matching. ')
+            return
         pre_processed_data.to_gbq(f'{data_set_original}.{preprocessed_table}', project_id=project, progress_bar=False,
                                   if_exists='replace')
         _set_table_expiration(data_set_original, preprocessed_table, expiration_days_original_table, bq_client)
@@ -468,7 +488,6 @@ def process_location_matching(data, context):
         data['has_sic_code'] = has_sic_code
         data['has_chain'] = has_chain
         data['original_file_name'] = original_name
-        data['full_result'] = full_result
         data['has_chain_id'] = has_chain_id
         data['has_chain_name'] = has_chain_name
         data['has_address'] = has_address
@@ -493,15 +512,19 @@ def process_location_matching(data, context):
         logging.warning(f'Process finished for {file_full_name}')
     except Exception as e:
         logging.exception(f'Unexpected error: {e}. Message: {traceback.format_exc()}. File: {data["name"]}')
-        if send_email_on_error:
-            try:
-                _send_mail(email_error, f'Location Matching Tool error '
-                                        f'{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}',
+        try:
+            if destination_email is not None:
+                _send_mail(destination_email, f'Error in Location Matching Tool for "{cf_name}"',
+                           f'Unexpected error processing "{cf_name}". Please file an Engineering Support ticket '
+                           f'(issue type —> reporting and analytics) for Data Engineering team to investigate the '
+                           f'issue.')
+            if send_email_on_error:
+                _send_mail(email_error, f'Location Matching Tool error for "{cf_name}"',
                            f'Error processing location matching: {traceback.format_exc()}.<br />File: {data["name"]}')
-            except Exception as e1:
-                logging.exception(f'Unexpected error sending email {e1}: {traceback.format_exc()}')
+        except Exception as e1:
+            logging.exception(f'Unexpected error sending email {e1}: {traceback.format_exc()}')
         if fail_on_error:
             raise e
 
 
-process_location_matching({'name': 'dviorel@inmarket.com/chain_id_name_both___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/tgt_6_17_20___no_mv_gcs.txt'}, None)
