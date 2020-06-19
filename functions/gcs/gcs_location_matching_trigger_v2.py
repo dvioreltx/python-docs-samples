@@ -350,6 +350,11 @@ def process_location_matching(data, context):
         if '@' not in destination_email:
             logging.error(f'{destination_email} is not a valid email ...{original_name}')
             return
+        if not file_full_name.endswith('.txt'):
+            _send_mail(destination_email, f'File format error in Location Matching Tool for "{cf_name}"',
+                       f'"{cf_name}" is not a valid supported file type. Please verify the file '
+                       f'format is "Tab delimited Text(.txt)" before resubmitting for matching.')
+            return
         file_name = file_full_name[file_full_name.rfind('/') + 1:]
         now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         if '.' in file_name:

@@ -27,7 +27,7 @@ default_args = {
 
 # Define DAG: Set ID and assign default args and schedule interval
 dag = DAG(
-    'gcs_location_matching_created',
+    'gcs_location_matching',
     default_args=default_args,
     description='Location Matching Tool',
     # Not scheduled, trigger only
