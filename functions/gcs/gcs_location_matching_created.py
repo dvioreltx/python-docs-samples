@@ -1,17 +1,16 @@
 import datetime
-
 import logging
 import os
-from enum import Enum
 import traceback
 import pytz
+import google.auth
+import pandas as pd
+from enum import Enum
 from airflow import DAG
 from airflow.operators.email_operator import EmailOperator
 from airflow.operators.python_operator import PythonOperator
-import google.auth
 from google.cloud import bigquery
 from google.cloud import storage
-import pandas as pd
 
 # Config variables
 default_args = {
@@ -25,7 +24,6 @@ default_args = {
     'start_date': datetime.datetime(2020, 4, 1),
 }
 
-# Define DAG: Set ID and assign default args and schedule interval
 dag = DAG(
     'gcs_location_matching_created',
     default_args=default_args,
@@ -36,16 +34,15 @@ dag = DAG(
 
 # Define functions and query strings
 delete_intermediate_tables = False
+delete_gcs_files = False
 data_set_original = "location_matching_file"
 data_set_final = "location_matching_match"
 bucket = 'location_matching'
+expiration_days_original_table = 7
 expiration_days_results_table = 30
 project = "cptsrewards-hrd"
 url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
 logging.basicConfig(level=logging.DEBUG)
-
-delete_gcs_files = False
-expiration_days_original_table = 7
 query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
 query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
 query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
@@ -53,8 +50,12 @@ query_cities = 'select distinct city, state from (select distinct city, state fr
 
 
 class LMAlgo(Enum):
-    CHAIN = 1
-    SIC_CODE = 2
+    # CHAIN = 1
+    CHAIN_ZIP = 1
+    CHAIN_CITY = 2
+    SIC_CODE = 3
+    MULTI_CHAIN_ID = 4
+    MULTI_CHAIN_NAME = 5
 
 
 def _verify_fields(columns, validation_fields):
@@ -276,13 +277,7 @@ def _notify_error_adops(context, email_to, file_name):
 
 
 def _send_mail(context, send_to, subject, body, attachments=None):
-    email_op = EmailOperator(
-        task_id='send_email',
-        to=send_to,
-        subject=subject,
-        html_content=body,
-        files=attachments,
-    )
+    email_op = EmailOperator(task_id='send_email', to=send_to, subject=subject, html_content=body, files=attachments)
     email_op.execute(context)
 
 
@@ -334,12 +329,11 @@ def _set_table_expiration(dataset, table_name, expiration_days, bq_client):
     bq_client.update_table(table, ["expires"])
 
 
-def _run_location_matching(table, destination_table, bq_client, algorithm, has_zip, has_city, is_multiple_chain_id,
-                           is_multiple_chain_name):
+def _run_location_matching(table, destination_table, bq_client, algorithm):
     query = None
-    logging.warning(f'Will run location_matching with {algorithm} mid {is_multiple_chain_id} mcn {is_multiple_chain_name}')
-    if is_multiple_chain_id or is_multiple_chain_name:
-        field = 'chain_id' if is_multiple_chain_id else 'chain_name'
+    logging.warning(f'Will run location_matching with {algorithm}')
+    if algorithm == LMAlgo.MULTI_CHAIN_ID or algorithm == LMAlgo.MULTI_CHAIN_NAME:
+        field = 'chain_id' if algorithm == LMAlgo.MULTI_CHAIN_ID else 'chain_name'
         query = f"""#standardSQL
 declare level_of_accuracy string default '';
 set level_of_accuracy = 'relaxed';
@@ -404,9 +398,9 @@ from (
 )
 where ar = 1;
         """
-    elif algorithm == LMAlgo.CHAIN:
-        if not has_zip and not has_city:
-            raise Exception('Zip OR City is required to run Location Matching Algorithm!')
+    # elif algorithm == LMAlgo.CHAIN:
+    elif algorithm == LMAlgo.CHAIN_ZIP or algorithm == LMAlgo.CHAIN_CITY:
+        join_fields = 'lg_zip = zip' if algorithm == LMAlgo.CHAIN_ZIP else 'clean_city = clean_lg_city'
         query = f""" create temporary function strMatchRate(str1 STRING, str2 string, type string, city string) 
   returns float64 
   language js as "return scoreMatchFor(str1, str2, type, city)";    
@@ -495,7 +489,7 @@ insert into stage1
 with 
  combined as (
    select * from sample a left join location_geofence b 
-    on {'lg_zip = zip' if has_zip else 'clean_city = clean_lg_city' }
+    on {join_fields}
  ),
  chain_match_scores as (
    select *
@@ -639,10 +633,9 @@ library=['gs://javascript_lib/addr_functions.js']
     query_job.result()
 
 
-def _create_final_table(original_table, location_matching_table, final_table, bq_client, algorithm,
-                        is_multiple_chain_id, is_multiple_chain_name):
+def _create_final_table(original_table, location_matching_table, final_table, bq_client, algorithm):
     query = None
-    if is_multiple_chain_id or is_multiple_chain_name:
+    if algorithm == LMAlgo.MULTI_CHAIN_ID or algorithm == LMAlgo.MULTI_CHAIN_NAME:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                 SELECT * FROM(
                     select p.store_id as store_id, '' as provided_chain, 
@@ -672,7 +665,8 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     )
                  )order by store_id
             """
-    elif algorithm == LMAlgo.CHAIN:
+    # elif algorithm == LMAlgo.CHAIN:
+    elif algorithm == LMAlgo.CHAIN_ZIP or algorithm == LMAlgo.CHAIN_CITY:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                     SELECT * FROM(
                     select p.store_id as store_id, 
@@ -776,9 +770,13 @@ def execute_location_matching(**context):
         logging.warning('log: credentials readed')
         bq_client = bigquery.Client(project=project, credentials=credentials)
         logging.warning('log: bq_client obtained, will run location_matching')
-        _run_location_matching(preprocessed_table, location_matching_table, bq_client,
-                               LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, has_zip, has_city,
-                               has_multiple_chain_id, has_multiple_chain_name)
+        algo = LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN
+        if has_multiple_chain_id:
+            algo = LMAlgo.MULTI_CHAIN_ID
+        if has_multiple_chain_name:
+            algo = LMAlgo.MULTI_CHAIN_NAME
+
+        _run_location_matching(preprocessed_table, location_matching_table, bq_client, algo)
         logging.warning(f'log: location_matching ended in table {location_matching_table}')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
@@ -800,10 +798,13 @@ def prepare_results_table(**context):
         logging.warning(f'has_sic_code it eval: {has_sic_code}, type {type(has_sic_code)}')
         credentials, _ = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
+        algo = LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN
+        if has_multiple_chain_id:
+            algo = LMAlgo.MULTI_CHAIN_ID
+        if has_multiple_chain_name:
+            algo = LMAlgo.MULTI_CHAIN_NAME
         logging.warning(f'log: bq_client obtained, will create final table {preprocessed_table}')
-        _create_final_table(preprocessed_table, preprocessed_table + '_lm', preprocessed_table, bq_client,
-                            LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN, has_multiple_chain_id,
-                            has_multiple_chain_name)
+        _create_final_table(preprocessed_table, preprocessed_table + '_lm', preprocessed_table, bq_client, algo)
         logging.warning('log: prepare_results ended')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')

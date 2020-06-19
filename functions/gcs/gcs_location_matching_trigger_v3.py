@@ -1,75 +1,30 @@
 import datetime
+import logging
 import pandas as pd
-import base64
+import requests
 import traceback
-from enum import Enum
-from os.path import basename
-
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, Disposition
-
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
-import logging
-import requests
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+
+enable_trigger = True
+send_email_on_error = True
+email_error = 'dviorel@inmarket.com'
+bucket = 'location_matching'
+fail_on_error = False
 
 IAM_SCOPE = 'https://www.googleapis.com/auth/iam'
 OAUTH_TOKEN_URI = 'https://www.googleapis.com/oauth2/v4/token'
 client_id = '340376694278-ss8m9rl3vs610d3lfmnn42mcrk3467ns.apps.googleusercontent.com'
 webserver_id = 'u5d9ecf3bb91ae6ad-tp'
 dag_name = 'gcs_location_matching_created'
-
-delete_intermediate_tables = False
-delete_gcs_files = False
-enable_trigger = True
-send_email_on_error = True
-data_set_original = "location_matching_file"
-
-bucket = 'location_matching'
-email_error = 'dviorel@inmarket.com'
-expiration_days_original_table = 7
-expiration_days_results_table = 30
-
 logging.basicConfig(level=logging.DEBUG)
 
-fail_on_error = False
-project = "cptsrewards-hrd"
-url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
-query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
-query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
-query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
-               'locations_no_distributors` union all select distinct city, state from `aggdata.location_geofence`)'
 
-
-class LMAlgo(Enum):
-    CHAIN = 1
-    SIC_CODE = 2
-
-
-def _make_iap_request(url, client_id, method='GET', **kwargs):
-    """Makes a request to an application protected by Identity-Aware Proxy.
-    Args:
-      url: The Identity-Aware Proxy-protected URL to fetch.
-      client_id: The client ID used by Identity-Aware Proxy.
-      method: The request method to use
-              ('GET', 'OPTIONS', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE')
-      **kwargs: Any of the parameters defined for the request function:
-                https://github.com/requests/requests/blob/master/requests/api.py
-                If no timeout is provided, it is set to 90 by default.
-    Returns:
-      The page body, or raises an exception if the page couldn't be retrieved.
-    """
-    if 'timeout' not in kwargs:
-        kwargs['timeout'] = 90
-    logging.warning(f'Data: {kwargs}')
-    # Obtain an OpenID Connect (OIDC) token from metadata server or using service
-    # account.
+def _make_iap_request(url, method='GET', **kwargs):
     logging.warning(f'Will ge token')
     google_open_id_connect_token = id_token.fetch_id_token(Request(), client_id)
-    logging.warning(f'Token obtained')
-    # Fetch the Identity-Aware Proxy-protected URL, including an
-    # Authorization header containing "Bearer " followed by a
-    # Google-issued OpenID Connect token for the service account.
     logging.warning(f'Will call request')
     resp = requests.request(method, url, headers={'Authorization': 'Bearer {}'.format(google_open_id_connect_token)},
                             **kwargs)
@@ -89,17 +44,9 @@ def _sanitize_file_name(file_name):
     return file_name
 
 
-def _send_mail(send_to, subject, body, attachments=None):
+def _send_mail(send_to, subject, body):
     logging.info(f'Will send email with title: {subject} to {send_to}')
     message = Mail(from_email='data-eng@inmarket.com', to_emails=f'{send_to}', subject=subject, html_content=body)
-    for attachment in attachments or []:
-        with open(attachment, "rb") as f:
-            data = f.read()
-            f.close()
-            encoded_file = base64.b64encode(data).decode()
-            attached_file = Attachment(FileContent(encoded_file), FileName(basename(attachment)), None,
-                                       Disposition('attachment'))
-        message.add_attachment(attached_file)
     sg = SendGridAPIClient('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')
     response = sg.send(message)
     logging.warning(f'Result: {response.status_code}')
@@ -154,7 +101,6 @@ def process_location_matching(data, context):
                        f'format is "Tab delimited Text(.txt)" before resubmitting for matching.')
             return
         file_name = file_full_name[file_full_name.rfind('/') + 1:]
-        now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         if '.' in file_name:
             file_name = file_name[:file_name.rfind('.')]
         file_name = _sanitize_file_name(file_name)
@@ -202,17 +148,13 @@ def process_location_matching(data, context):
         has_multiple_chain_id = False
         has_multiple_chain_name = False
         if 'chain id' in raw_data.columns:
-            # queried_df = raw_data[raw_data['chain id'].str.contains(',', na=False)]
             queried_df = raw_data[raw_data['chain id'].astype(str).str.contains(',', na=False)]
             if len(queried_df.index) > 0:
                 has_multiple_chain_id = True
         if 'chain name' in raw_data.columns:
-            # queried_df = raw_data[raw_data['chain name'].str.contains(';', na=False)]
             queried_df = raw_data[raw_data['chain name'].astype(str).str.contains(';', na=False)]
             if len(queried_df.index) > 0:
                 has_multiple_chain_name = True
-        webserver_url = ('https://' + webserver_id + '.appspot.com/api/experimental/dags/' + dag_name + '/dag_runs')
-        # Make a POST request to IAP which then Triggers the DAG
         data['table'] = preprocessed_table
         data['has_sic_code'] = has_sic_code
         data['has_chain'] = has_chain
@@ -225,7 +167,8 @@ def process_location_matching(data, context):
         data['file_name'] = cf_name
         data['has_multiple_chain_id'] = has_multiple_chain_id
         data['has_multiple_chain_name'] = has_multiple_chain_name
-        _make_iap_request(webserver_url, client_id, method='POST', json={"conf": data})
+        webserver_url = ('https://' + webserver_id + '.appspot.com/api/experimental/dags/' + dag_name + '/dag_runs')
+        _make_iap_request(webserver_url, method='POST', json={"conf": data})
         logging.warning(f'Process finished for {file_full_name}')
     except Exception as e:
         logging.exception(f'Unexpected error: {e}. Message: {traceback.format_exc()}. File: {data["name"]}')
