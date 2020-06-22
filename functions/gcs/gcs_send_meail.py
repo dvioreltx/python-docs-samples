@@ -5,7 +5,7 @@ import google.auth
 from google.cloud import bigquery
 from google.cloud import bigquery_storage_v1beta1
 # import google.appengine.api.mail.send_mail
-from google.appengine.api import mail
+# from google.appengine.api import mail
 
 dataset = "dannyv"
 project = "cptsrewards-hrd"
@@ -36,4 +36,11 @@ def process_email(data, context):
         logging.exception(f'Unexpected error {e}')
 
 
-process_email({'name': 'dviorel@inmarket.com/unclean_list.txt'}, None)
+def join_test():
+    letters = ['uno', 'dos', 'tres']
+    joined = ' union all '.join(letters)
+    print(joined)
+
+
+join_test()
+# process_email({'name': 'dviorel@inmarket.com/unclean_list.txt'}, None)

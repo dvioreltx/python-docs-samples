@@ -369,6 +369,8 @@ def process_location_matching(data, context):
             raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='iso-8859-1')
         credentials, your_project_id = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
+        rows = bq_client.query('select count(*) from location_matching_file.address_full_more_than_30k')
+
         bq_storage_client = bigquery_storage_v1beta1.BigQueryStorageClient(credentials=credentials)
         # logging.warning(f'Will write raw table: {file_name}')
         raw_data.columns = map(str.lower, raw_data.columns)
@@ -482,3 +484,38 @@ def process_location_matching(data, context):
                 pass
         if fail_on_error:
             raise e
+
+
+def my_test(full_source_table, group_size):
+    credentials, your_project_id = google.auth.default(scopes=[url_auth_gcp])
+    bq_client = bigquery.Client(project=project, credentials=credentials)
+    job = bq_client.query(f'select count(*) as c from {full_source_table}')
+    result = job.result()
+    row_count = 0
+    for row in result:
+        row_count = int(row['c'])
+    print(f'Row count: {row_count}')
+    current = 1
+    i = 1
+    while current <= row_count:
+        upper_limit = (current + group_size - 1) if current + group_size - 1 <= row_count else row_count
+        query = f'CREATE OR REPLACE TABLE {full_source_table}_{i} AS SELECT * FROM {full_source_table} WHERE' \
+                f' store_id between {current} and {upper_limit} order by store_id'
+        logging.warning(f'It will run:\n{query}')
+        second_job = bq_client.query(query)
+        second_result = second_job.result()
+        current = current + group_size
+        i += 1
+    print('END')
+
+
+def my_second_test(full_source_table, group_size):
+    try:
+        my_test(full_source_table, group_size)
+    except Exception as e:
+        logging.exception(f'My error: {e}')
+        raise e
+
+
+my_second_test('location_matching_file.address_full_more_than_30k_1', 3000)
+# process_location_matching({'name': 'dviorel@inmarket.com/tgt_6_17_20___no_mv_gcs.txt'}, None)
