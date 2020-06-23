@@ -18,10 +18,10 @@ default_args = {
     'depends_on_past': False,
     'email': ['dviorel@inmarket.com'],
     'email_on_failure': True,
-    'email_on_retry': False,
-    'retries': 1,
+    'email_on_retry': True,
+    'retries': 0,
     'retry_delay': datetime.timedelta(minutes=5),
-    'start_date': datetime.datetime(2020, 4, 1),
+    'start_date': datetime.datetime(2020, 6, 1)
 }
 
 dag = DAG(
