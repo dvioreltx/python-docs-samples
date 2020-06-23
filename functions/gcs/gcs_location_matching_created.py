@@ -791,8 +791,57 @@ def execute_location_matching(**context):
             logging.warning(f'Will join all tables in {location_matching_table}')
             _join_results(bq_client, subtables, location_matching_table)
         else:
-            location_matching_table = preprocessed_table + '_lm'
-            _run_location_matching(preprocessed_table, location_matching_table, bq_client, algo)
+            # If it ran with CHAIN_ZIP, first run is with zip, and then another with CITY, the last one in blocks
+            if algo == LMAlgo.CHAIN_ZIP:
+                location_matching_table = preprocessed_table + '_first_lm'
+                _run_location_matching(preprocessed_table, location_matching_table, bq_client, algo)
+                # Build table with those rows that doesn't match
+                preprocessed_table_second = f'{preprocessed_table}_second'
+                query = f'''CREATE OR REPLACE TABLE {data_set_original}.{preprocessed_table_second} AS SELECT * FROM 
+                        {data_set_original}.{preprocessed_table} WHERE store_id NOT IN (SELECT store_id FROM 
+                        {data_set_original}.{location_matching_table} WHERE isa_match IN ('definitely', 
+                        'very probably', 'probably'))
+                        '''
+                logging.warning(f'It will create second table with:\n{query}')
+                job = bq_client.query(query)
+                result = job.result()
+                # Get the small table names
+                subtables = _should_split_process(bq_client, preprocessed_table_second, block_size, LMAlgo.CHAIN_CITY,
+                                                  has_zip, has_city, forced=True)
+                logging.warning(f'Should split process: {subtables}')
+                if subtables is not None:
+                    # For each small table it runs the algorithm
+                    logging.warning(f'Small tables: {subtables}')
+                    _build_small_tables(bq_client, preprocessed_table_second, subtables)
+                    # For each small table it runs the algorithm
+                    for table in subtables:
+                        location_matching_table = table[0] + '_lm'
+                        logging.warning(f'Will run location_matching for: {location_matching_table}')
+                        _run_location_matching(table[0], location_matching_table, bq_client, algo)
+                    # Join every _lm_temp_XX result into a _lm final table
+                    location_matching_table = preprocessed_table_second + '_lm'
+                    logging.warning(f'Will joinnn all tables in {location_matching_table}')
+                    _join_results(bq_client, subtables, location_matching_table)
+                    logging.warning(f'{location_matching_table} created!')
+                else:
+                    location_matching_table = preprocessed_table_second + '_lm'
+                    _run_location_matching(preprocessed_table_second, location_matching_table, bq_client,
+                                           LMAlgo.CHAIN_CITY)
+                    logging.warning(f'{location_matching_table} createddd!')
+                # Join the_lm table with the fist _lm table
+                query = f'''CREATE OR REPLACE TABLE {data_set_original}.{preprocessed_table}_lm AS
+                            SELECT * FROM (SELECT * FROM {data_set_original}.{preprocessed_table}_first_lm
+                            WHERE isa_match in ('definitely', 'very probably', 'probably')
+                            UNION ALL SELECT * FROM {data_set_original}.{preprocessed_table}_second_lm
+                            ) ORDER BY store_id 
+                        '''
+                logging.warning(f'It will run: {query}')
+                job = bq_client.query(query)
+                result = job.result()
+                logging.warning(f'Created!!!')
+            else:
+                location_matching_table = preprocessed_table + '_lm'
+                _run_location_matching(preprocessed_table, location_matching_table, bq_client, algo)
         logging.warning(f'log: location_matching ended in table {location_matching_table}')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
@@ -800,9 +849,9 @@ def execute_location_matching(**context):
         raise e
 
 
-def _should_split_process(bq_client, source_table, group_size, algo, has_zip, has_city):
+def _should_split_process(bq_client, source_table, group_size, algo, has_zip, has_city, forced=False):
     full_source_table = f'{data_set_original}.{source_table}'
-    if has_zip:
+    if has_zip and not forced:
         return None
     job = bq_client.query(f'select count(*) as c from {full_source_table}')
     result = job.result()
