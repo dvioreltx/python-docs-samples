@@ -250,7 +250,6 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
                 address = address_full[:position]
                 break
     if not found:
-        # raise Exception(f'No data found for {address_full}')
         logging.warning(f'No data found for {address_full}')
         address = 'N/A'
         state = 'N/A'
@@ -281,8 +280,8 @@ def _send_mail(context, send_to, subject, body, attachments=None):
 
 def send_email_results(**context):
     try:
-        logging.warning('log: send_email_results 01')
         preprocessed_table = context['dag_run'].conf['table']
+        logging.warning(f'It will send_email_results for {preprocessed_table}')
         file_name = preprocessed_table
         original_file_name = context['dag_run'].conf['original_file_name']
         file_name_email = context['dag_run'].conf['file_name']
@@ -746,52 +745,49 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
 
 def execute_location_matching(**context):
     try:
-        logging.warning(f'log: execute_location_matching started')
         preprocessed_table = context['dag_run'].conf['table']
-        logging.warning(f'log: execute_location_matching started for {preprocessed_table}')
+        logging.info(f'execute_location_matching started for {preprocessed_table}')
         has_sic_code = context['dag_run'].conf['has_sic_code']
         has_chain = context['dag_run'].conf['has_chain']
         has_zip = context['dag_run'].conf['has_zip']
         has_city = context['dag_run'].conf['has_city']
         has_multiple_chain_id = context['dag_run'].conf['has_multiple_chain_id']
         has_multiple_chain_name = context['dag_run'].conf['has_multiple_chain_name']
-        logging.warning(f'has_sic_code: {has_sic_code}')
-        logging.warning(f'has_chain: {has_chain}')
-        logging.warning(f'has_zip: {has_zip}')
-        logging.warning(f'has_city: {has_city}')
-        logging.warning(f'has_multiple_chain_id: {has_multiple_chain_id}')
-        logging.warning(f'has_multiple_chain_name: {has_multiple_chain_name}')
+        logging.info(f'has_sic_code: {has_sic_code}')
+        logging.info(f'has_chain: {has_chain}')
+        logging.info(f'has_zip: {has_zip}')
+        logging.info(f'has_city: {has_city}')
+        logging.info(f'has_multiple_chain_id: {has_multiple_chain_id}')
+        logging.info(f'has_multiple_chain_name: {has_multiple_chain_name}')
         has_sic_code = has_sic_code and not has_chain
         credentials, _ = google.auth.default(scopes=[url_auth_gcp])
-        logging.warning('log: credentials readed')
         bq_client = bigquery.Client(project=project, credentials=credentials)
-        logging.warning('log: bq_client obtained, will run location_matching')
-        algo = LMAlgo.SIC_CODE if has_sic_code else (LMAlgo.CHAIN_ZIP if has_zip else LMAlgo.CHAIN_CITY)
+        algorithm = LMAlgo.SIC_CODE if has_sic_code else (LMAlgo.CHAIN_ZIP if has_zip else LMAlgo.CHAIN_CITY)
         if has_multiple_chain_id:
-            algo = LMAlgo.MULTI_CHAIN_ID
+            algorithm = LMAlgo.MULTI_CHAIN_ID
         if has_multiple_chain_name:
-            algo = LMAlgo.MULTI_CHAIN_NAME
-        logging.warning(f'Algorithm: {algo}')
-        subtables = _should_split_process(bq_client, preprocessed_table, block_size, algo, has_zip, has_city)
-        logging.warning(f'Should split process: {subtables}')
+            algorithm = LMAlgo.MULTI_CHAIN_NAME
+        logging.info(f'log: bq_client obtained, will run location_matching with {algorithm}')
+        subtables = _should_split_process(bq_client, preprocessed_table, block_size, algorithm, has_zip, has_city)
+        logging.info(f'Should split process: {subtables}')
         if subtables is not None:
             # Build small tables
-            logging.warning(f'Small tables: {subtables}')
+            logging.info(f'Small tables: {subtables}')
             _build_small_tables(bq_client, preprocessed_table, subtables)
             # For each small table it runs the algorithm
             for table in subtables:
                 location_matching_table = table[0] + '_lm'
-                logging.warning(f'Will run location_matching for: {location_matching_table}')
-                _run_location_matching(table[0], location_matching_table, bq_client, algo)
+                logging.info(f'Will run location_matching for: {location_matching_table}')
+                _run_location_matching(table[0], location_matching_table, bq_client, algorithm)
             # Join every _lm_temp_XX result into a _lm final table
             location_matching_table = preprocessed_table + '_lm'
-            logging.warning(f'Will join all tables in {location_matching_table}')
+            logging.info(f'Will join all tables in {location_matching_table}')
             _join_results(bq_client, subtables, location_matching_table)
         else:
             # If it ran with CHAIN_ZIP, first run is with zip, and then another with CITY, the last one in blocks
-            if algo == LMAlgo.CHAIN_ZIP:
+            if algorithm == LMAlgo.CHAIN_ZIP:
                 location_matching_table = preprocessed_table + '_first_lm'
-                _run_location_matching(preprocessed_table, location_matching_table, bq_client, algo)
+                _run_location_matching(preprocessed_table, location_matching_table, bq_client, algorithm)
                 # Build table with those rows that doesn't match
                 preprocessed_table_second = f'{preprocessed_table}_second'
                 query = f'''CREATE OR REPLACE TABLE {data_set_original}.{preprocessed_table_second} AS SELECT * FROM 
@@ -799,9 +795,9 @@ def execute_location_matching(**context):
                         {data_set_original}.{location_matching_table} WHERE isa_match IN ('definitely', 
                         'very probably', 'probably'))
                         '''
-                logging.warning(f'It will create second table with:\n{query}')
+                logging.info(f'It will create second table with:\n{query}')
                 job = bq_client.query(query)
-                result = job.result()
+                job.result()
                 # Get the small table names
                 subtables = _should_split_process(bq_client, preprocessed_table_second, block_size, LMAlgo.CHAIN_CITY,
                                                   has_zip, has_city, forced=True)
@@ -813,18 +809,18 @@ def execute_location_matching(**context):
                     # For each small table it runs the algorithm
                     for table in subtables:
                         location_matching_table = table[0] + '_lm'
-                        logging.warning(f'Will run location_matching for: {location_matching_table}')
-                        _run_location_matching(table[0], location_matching_table, bq_client, algo)
+                        logging.info(f'Will run location_matching for: {location_matching_table}')
+                        _run_location_matching(table[0], location_matching_table, bq_client, algorithm)
                     # Join every _lm_temp_XX result into a _lm final table
                     location_matching_table = preprocessed_table_second + '_lm'
-                    logging.warning(f'Will joinnn all tables in {location_matching_table}')
+                    logging.info(f'Will join all tables in {location_matching_table}')
                     _join_results(bq_client, subtables, location_matching_table)
-                    logging.warning(f'{location_matching_table} created!')
+                    logging.info(f'{location_matching_table} created!')
                 else:
                     location_matching_table = preprocessed_table_second + '_lm'
                     _run_location_matching(preprocessed_table_second, location_matching_table, bq_client,
                                            LMAlgo.CHAIN_CITY)
-                    logging.warning(f'{location_matching_table} createddd!')
+                    logging.info(f'{location_matching_table} created!')
                 # Join the_lm table with the fist _lm table
                 query = f'''CREATE OR REPLACE TABLE {data_set_original}.{preprocessed_table}_lm AS
                             SELECT * FROM (SELECT * FROM {data_set_original}.{preprocessed_table}_first_lm
@@ -832,14 +828,14 @@ def execute_location_matching(**context):
                             UNION ALL SELECT * FROM {data_set_original}.{preprocessed_table}_second_lm
                             ) ORDER BY store_id 
                         '''
-                logging.warning(f'It will run: {query}')
+                logging.info(f'It will run: {query}')
                 job = bq_client.query(query)
-                result = job.result()
-                logging.warning(f'Created!!!')
+                job.result()
+                logging.info(f'Created!!!')
             else:
                 location_matching_table = preprocessed_table + '_lm'
-                _run_location_matching(preprocessed_table, location_matching_table, bq_client, algo)
-        logging.warning(f'log: location_matching ended in table {location_matching_table}')
+                _run_location_matching(preprocessed_table, location_matching_table, bq_client, algorithm)
+        logging.info(f'location_matching ended in table {location_matching_table}')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
         _notify_error_adops(context, context['dag_run'].conf['destination_email'], context['dag_run'].conf['file_name'])
@@ -847,6 +843,7 @@ def execute_location_matching(**context):
 
 
 def _should_split_process(bq_client, source_table, group_size, algo, has_zip, has_city, forced=False):
+    logging.info(f'It will ask if should split {source_table}, {algo}, {has_zip}, {has_city}, forced {forced}')
     full_source_table = f'{data_set_original}.{source_table}'
     if has_zip and not forced:
         return None
@@ -871,78 +868,80 @@ def _should_split_process(bq_client, source_table, group_size, algo, has_zip, ha
 
 
 def _join_results(bq_client, small_tables, joined_table):
+    logging.info(f'It will join results from {small_tables} in {joined_table}')
     query = f'CREATE OR REPLACE TABLE {data_set_original}.{joined_table} AS SELECT * FROM('
     query_tables = [f'SELECT * FROM {data_set_original}.' + item[0] + '_lm' for item in small_tables]
     query = query + ' UNION ALL '.join(query_tables) + ') ORDER BY store_id'
-    logging.warning(f'It will run:\n{query}')
+    logging.info(f'It will run:\n{query}')
     job = bq_client.query(query)
-    result = job.result()
+    job.result()
 
 
 def _build_small_tables(bq_client, source_table, subtables):
+    logging.info(f'It will split {source_table}')
     full_source_table = f'{data_set_original}.{source_table}'
     job = bq_client.query(f'select count(*) as c from {full_source_table}')
     result = job.result()
     row_count = 0
     for row in result:
         row_count = int(row['c'])
-    logging.info(f'Splitting {full_source_table} of {row_count}: {subtables}')
+    logging.info(f'Splitting {full_source_table} of {row_count} in {subtables}')
     for subtable in subtables:
         query = f'CREATE OR REPLACE TABLE {data_set_original}.{subtable[0]} AS SELECT * FROM {full_source_table} ' \
                 f'WHERE store_id between {subtable[1]} and {subtable[2]} order by store_id'
-        logging.warning(f'It will run:\n{query}')
+        logging.debug(f'It will run:\n{query}')
         job = bq_client.query(query)
-        result = job.result()
+        job.result()
+    logging.info(f'Small tables splitted')
 
 
 def prepare_results_table(**context):
     try:
-        logging.warning('log: prepare_results_table')
         preprocessed_table = context['dag_run'].conf['table']
+        logging.info(f'It will prepare results table for {preprocessed_table}')
         has_sic_code = context['dag_run'].conf['has_sic_code']
         has_chain = context['dag_run'].conf['has_chain']
         has_zip = context['dag_run'].conf['has_zip']
         has_multiple_chain_id = context['dag_run'].conf['has_multiple_chain_id']
         has_multiple_chain_name = context['dag_run'].conf['has_multiple_chain_name']
-        logging.warning(f'has_sic_code: {has_sic_code}')
-        logging.warning(f'has_chain: {has_chain}')
         has_sic_code = has_sic_code and not has_chain
-        logging.warning(f'has_sic_code it eval: {has_sic_code}, type {type(has_sic_code)}')
         credentials, _ = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
-        # algo = LMAlgo.SIC_CODE if has_sic_code else LMAlgo.CHAIN
-        algo = LMAlgo.SIC_CODE if has_sic_code else (LMAlgo.CHAIN_ZIP if has_zip else LMAlgo.CHAIN_CITY)
+        algorithm = LMAlgo.SIC_CODE if has_sic_code else (LMAlgo.CHAIN_ZIP if has_zip else LMAlgo.CHAIN_CITY)
         if has_multiple_chain_id:
-            algo = LMAlgo.MULTI_CHAIN_ID
+            algorithm = LMAlgo.MULTI_CHAIN_ID
         if has_multiple_chain_name:
-            algo = LMAlgo.MULTI_CHAIN_NAME
-        logging.warning(f'log: bq_client obtained, will create final table {preprocessed_table}')
-        _create_final_table(preprocessed_table, preprocessed_table + '_lm', preprocessed_table, bq_client, algo)
-        logging.warning('log: prepare_results ended')
+            algorithm = LMAlgo.MULTI_CHAIN_NAME
+        logging.info(f'Algorithm: {algorithm}')
+        _create_final_table(preprocessed_table, preprocessed_table + '_lm', preprocessed_table, bq_client, algorithm)
+        logging.info('Results table prepared')
     except Exception as e:
-        logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
+        logging.exception(f'Error {e} with traceback: {traceback.format_exc()}')
         _notify_error_adops(context, context['dag_run'].conf['destination_email'], context['dag_run'].conf['file_name'])
         raise e
 
 
 def delete_temp_data(**context):
-    logging.warning('log: delete_temp_data')
+    logging.info(f'Delete_temp_data with value {delete_intermediate_tables}')
     if delete_intermediate_tables:
         preprocessed_table = context['dag_run'].conf["table"]
+        has_zip = context['dag_run'].conf['has_zip']
+        has_city = context['dag_run'].conf['has_city']
+        has_sic_code = context['dag_run'].conf['has_sic_code']
         location_matching_table = preprocessed_table + '_lm'
         result_table = preprocessed_table + '_result'
         logging.info(f'Start to delete lm_table {location_matching_table} and results table {result_table}')
         credentials, _ = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
-        # Verify if it should delete block tables
-        has_zip = context['dag_run'].conf['has_zip']
-        has_city = context['dag_run'].conf['has_city']
-        has_sic_code = context['dag_run'].conf['has_sic_code']
         algo = LMAlgo.SIC_CODE if has_sic_code else (LMAlgo.CHAIN_ZIP if has_zip else LMAlgo.CHAIN_CITY)
         tables_data = _should_split_process(bq_client, preprocessed_table, block_size, algo, has_zip, has_city)
         if tables_data is not None:
             for table_data in tables_data:
                 bq_client.delete_table(f'{data_set_original}.{table_data[0]}')
+        if algo == LMAlgo.CHAIN_ZIP:
+            # TODO: To complete alternative_tables
+            pass
+        # Also it ask if its 2nd pass and it should delete list of tables
         bq_client.delete_table(f'{data_set_original}.{location_matching_table}')
         bq_client.delete_table(f'{data_set_original}.{result_table}')
 
