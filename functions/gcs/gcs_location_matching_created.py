@@ -31,6 +31,7 @@ dag = DAG(
 )
 
 # Define functions and query strings
+block_size = 5000
 delete_intermediate_tables = False
 delete_gcs_files = False
 data_set_original = "location_matching_file"
@@ -38,7 +39,6 @@ data_set_final = "location_matching_match"
 bucket = 'location_matching'
 expiration_days_original_table = 7
 expiration_days_results_table = 30
-block_size = 3000
 project = "cptsrewards-hrd"
 url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
 logging.basicConfig(level=logging.DEBUG)
@@ -967,7 +967,7 @@ def pre_process_file(**context):
             except Exception as e:
                 logging.error(f'Error reading file, will send email format {e} and exit function: '
                               f'{traceback.format_exc()}')
-                _send_mail(destination_email, f'File format error in Location Matching Tool for "{cf_name}"',
+                _send_mail(context, destination_email, f'File format error in Location Matching Tool for "{cf_name}"',
                            f'"{cf_name}" is not a valid supported file type. Please verify the file '
                            f'format is "Tab delimited Text(.txt)" before resubmitting for matching.')
                 return
@@ -981,7 +981,7 @@ def pre_process_file(**context):
         if 'chain id' not in raw_data.columns and 'chain name' not in raw_data.columns \
                 and 'sic code' not in raw_data.columns:
             logging.error(f'File {original_name} doesnt have required columns, will send email.')
-            _send_mail(destination_email, f'Missing required fields error in Location Matching Tool for "{cf_name}"',
+            _send_mail(context, destination_email, f'Missing required fields error in Location Matching Tool for "{cf_name}"',
                        f'File "{cf_name}" must contain at least one of the following required fields - chain id, '
                        f'chain name or sic code. Please add the required field before resubmitting for matching.')
             return
@@ -1051,7 +1051,7 @@ def pre_process_file(**context):
         preprocessed_table = file_name.lower()
         logging.info(f'It will write to table: {preprocessed_table}')
         if has_chain and not has_zip and not has_city:
-            _send_mail(destination_email, f'Missing required fields error in Location Matching Tool for “{cf_name}”',
+            _send_mail(context, destination_email, f'Missing required fields error in Location Matching Tool for “{cf_name}”',
                        f'File {cf_name} must have at least one of the following fields: zip code or city. Please add '
                        f'the required field before resubmitting for matching. ')
             return
