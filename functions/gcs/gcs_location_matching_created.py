@@ -810,7 +810,8 @@ def execute_location_matching(**context):
                     for table in subtables:
                         location_matching_table = table[0] + '_lm'
                         logging.info(f'Will run location_matching for: {location_matching_table}')
-                        _run_location_matching(table[0], location_matching_table, bq_client, algorithm)
+                        # Force to run with City
+                        _run_location_matching(table[0], location_matching_table, bq_client, LMAlgo.CHAIN_CITY)
                     # Join every _lm_temp_XX result into a _lm final table
                     location_matching_table = preprocessed_table_second + '_lm'
                     logging.info(f'Will join all tables in {location_matching_table}')
