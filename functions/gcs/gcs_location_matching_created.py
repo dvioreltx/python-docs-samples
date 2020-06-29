@@ -954,7 +954,7 @@ def pre_process_file(**context):
         original_name = context['dag_run'].conf['original_file_name']
         logging.info(f'Started for {original_name}')
         validation_fields = {'sic code': 'sic_code', 'chain name/chain id': 'chain_name',
-                             'address/address full/address full (no zip)/address full (address, state, city, zip)':
+                             'address/address full/address (full)/address full (no zip)/address full (address, state, city, zip)':
                                  'address', 'city': 'city', 'state': 'state', 'zip': 'zip'}
         file_full_name = original_name.replace(' ', '_').replace('-', '_')
         destination_email = context['dag_run'].conf['destination_email']
@@ -1004,12 +1004,15 @@ def pre_process_file(**context):
                 pre_processed_data[validation_fields[key]] = None
         pre_processed_data = pre_processed_data.astype({'zip': 'str'})
         logging.info('Columns not present were added')
-        if 'address_full__no_zip_' in pre_processed_data.columns or 'address_full' in pre_processed_data.columns \
+        if 'address_full__no_zip_' in pre_processed_data.columns \
+                or 'address_full' in pre_processed_data.columns \
+                or 'address__full_' in pre_processed_data.columns \
                 or 'address_full__address_state_city_zip_' in pre_processed_data.columns \
                 or 'address_full__address__state__city__zip_' in pre_processed_data.columns:
             logging.info('It will pre-process address data')
             has_city = True
             if 'address_full' in pre_processed_data.columns or \
+                    'address__full_' in pre_processed_data.columns or \
                     'address_full__address_state_city_zip_' in pre_processed_data.columns or \
                     'address_full__address__state__city__zip_' in pre_processed_data.columns:
                 has_zip = True
@@ -1027,6 +1030,9 @@ def pre_process_file(**context):
                                                                          df_cities, False, False)
                 if 'address_full' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full'], df_states,
+                                                                         df_cities, True, False)
+                if 'address__full_' in pre_processed_data.columns:
+                    address, state, city, zip_code = _split_address_data(row['address__full_'], df_states,
                                                                          df_cities, True, False)
                 if 'address_full__address_state_city_zip_' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full__address_state_city_zip_'],
@@ -1078,7 +1084,7 @@ def pre_process_file(**context):
             source_bucket.delete_blob(from_blob.name)
         logging.warning(f'Pre-process finished for {file_full_name}')
     except Exception as e:
-        logging.exception(f'HError with {e} and this traceback: {traceback.format_exc()}')
+        logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
         exception_message = f'{e}'
         if not (exception_message == missing_required_fields_error):
             _notify_error_adops(context, context['dag_run'].conf['destination_email'], context['dag_run'].conf['file_name'])
