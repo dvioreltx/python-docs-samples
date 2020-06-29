@@ -41,6 +41,7 @@ expiration_days_original_table = 7
 expiration_days_results_table = 30
 project = "cptsrewards-hrd"
 url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
+missing_required_fields_error = 'Missing required fields error'
 logging.basicConfig(level=logging.DEBUG)
 query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
 query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
@@ -274,6 +275,7 @@ def _notify_error_adops(context, email_to, file_name):
 
 
 def _send_mail(context, send_to, subject, body, attachments=None):
+    logging.info(f'It will send {subject} to {send_to}')
     email_op = EmailOperator(task_id='send_email', to=send_to, subject=subject, html_content=body, files=attachments)
     email_op.execute(context)
 
@@ -984,7 +986,7 @@ def pre_process_file(**context):
             _send_mail(context, destination_email, f'Missing required fields error in Location Matching Tool for "{cf_name}"',
                        f'File "{cf_name}" must contain at least one of the following required fields - chain id, '
                        f'chain name or sic code. Please add the required field before resubmitting for matching.')
-            return
+            raise Exception(missing_required_fields_error)
         df_states = pd.read_gbq(query_states, project_id=project, dialect='standard')
         should_add_state_from_zip = 'state' not in pre_processed_data.columns and 'zip' in pre_processed_data.columns
         has_chain = 'chain_id' in pre_processed_data.columns or 'chain_name' in pre_processed_data.columns
@@ -1016,7 +1018,7 @@ def pre_process_file(**context):
             state = None
             city = None
             zip_code = None
-            logging.info(f'It will pre-processs {len(pre_processed_data.index)} rows')
+            logging.info(f'It will pre-process {len(pre_processed_data.index)} rows')
             for index, row in pre_processed_data.iterrows():
                 if index % 500 == 0:
                     logging.info(f'Row {index} of {len(pre_processed_data.index)}')
@@ -1049,12 +1051,13 @@ def pre_process_file(**context):
         pre_processed_data.insert(0, 'store_id', range(1, 1 + len(pre_processed_data)))
         logging.info('Data already pre-processed')
         preprocessed_table = file_name.lower()
-        logging.info(f'It will write to table: {preprocessed_table}')
         if has_chain and not has_zip and not has_city:
+            logging.error(f'File {original_name} doesnt have zip or city, will send email.')
             _send_mail(context, destination_email, f'Missing required fields error in Location Matching Tool for “{cf_name}”',
                        f'File {cf_name} must have at least one of the following fields: zip code or city. Please add '
                        f'the required field before resubmitting for matching. ')
-            return
+            raise Exception(missing_required_fields_error)
+        logging.info(f'It will write to table: {preprocessed_table}')
         pre_processed_data.to_gbq(f'{data_set_original}.{preprocessed_table}', project_id=project, progress_bar=False,
                                   if_exists='replace')
         _set_table_expiration(data_set_original, preprocessed_table, expiration_days_original_table, bq_client)
@@ -1075,8 +1078,10 @@ def pre_process_file(**context):
             source_bucket.delete_blob(from_blob.name)
         logging.warning(f'Pre-process finished for {file_full_name}')
     except Exception as e:
-        logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
-        _notify_error_adops(context, context['dag_run'].conf['destination_email'], context['dag_run'].conf['file_name'])
+        logging.exception(f'HError with {e} and this traceback: {traceback.format_exc()}')
+        exception_message = f'{e}'
+        if not (exception_message == missing_required_fields_error):
+            _notify_error_adops(context, context['dag_run'].conf['destination_email'], context['dag_run'].conf['file_name'])
         raise e
 
 
