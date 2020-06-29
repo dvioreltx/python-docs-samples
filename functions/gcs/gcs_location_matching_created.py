@@ -160,7 +160,12 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
     tokens = list(filter(None, tokens))
     length = len(tokens)
     if length < 3:
-        raise Exception(f'Just {length} tokens founded for {address_full}, waiting 3 at less')
+        logging.warning(f'Just {length} tokens founded for {address_full}, waiting 3 at less! it will return defaults')
+        address = ''
+        state = ''
+        city = ''
+        zip_code = '0'
+        return address, state, city, zip_code
     zip_code = tokens[len(tokens) - 1] if include_zip else None
     state_position = len(tokens) - (1 if include_zip else 0) - 1 - (1 if first_state else 0)
     found, state = _verify_match_df(df_states[df_states['state_abbr'] == tokens[state_position].upper()],
@@ -252,9 +257,9 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
                 break
     if not found:
         logging.warning(f'No data found for {address_full}')
-        address = 'N/A'
-        state = 'N/A'
-        city = 'N/A'
+        address = ''
+        state = ''
+        city = ''
         zip_code = '0'
     return address, state, city, zip_code
 
