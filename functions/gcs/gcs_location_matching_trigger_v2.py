@@ -216,12 +216,18 @@ def _add_state_from_zip(table, bq_client):
 
 
 def _split_address_data(address_full, df_states, df_cities, include_zip, first_state):
+    address_full = f'{address_full}'
     address_full = address_full.replace(',', ' ')
     tokens = address_full.split(' ')
     tokens = list(filter(None, tokens))
     length = len(tokens)
     if length < 3:
-        raise Exception(f'Just {length} tokens founded for {address_full}, waiting 3 at less')
+        logging.warning(f'Just {length} tokens founded for {address_full}, waiting 3 at less! it will return defaults')
+        address = ''
+        state = ''
+        city = ''
+        zip_code = '0'
+        return address, state, city, zip_code
     zip_code = tokens[len(tokens) - 1] if include_zip else None
     state_position = len(tokens) - (1 if include_zip else 0) - 1 - (1 if first_state else 0)
     found, state = _verify_match_df(df_states[df_states['state_abbr'] == tokens[state_position].upper()],
@@ -299,10 +305,7 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
                     city_found = True
             # 1 token
             if not city_found:
-                expected_match = filtered_cities[filtered_cities['city'].str.lower() == city.lower()]
-                if len(expected_match.index) > 0:
-                    address = sub_address[:sub_address.rfind(city)]
-                    city_found = True
+                address = sub_address[:sub_address.rfind(city)]
     if not found:
         filtered_cities = df_cities[df_cities['state'] == state]
         for index_city, row_city in filtered_cities.iterrows():
@@ -444,10 +447,10 @@ def process_location_matching(data, context):
                 if 'address_full__address__state__city__zip_' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full__address__state__city__zip_'],
                                                                          df_states, df_cities, True, True)
-                pre_processed_data.at[index, 'address'] = address
-                pre_processed_data.at[index, 'state'] = state
-                pre_processed_data.at[index, 'city'] = city
-                pre_processed_data.at[index, 'zip'] = zip_code
+                pre_processed_data.at[index, 'address'] = address.strip()
+                pre_processed_data.at[index, 'state'] = state.strip()
+                pre_processed_data.at[index, 'city'] = city.strip()
+                pre_processed_data.at[index, 'zip'] = zip_code.strip()
 
         pre_processed_data['zip'] = pre_processed_data['zip'].apply(lambda zip_code_lambda: _clean_zip(zip_code_lambda))
         pre_processed_data['state'] = pre_processed_data['state'].apply(lambda state_lambda:
@@ -533,4 +536,4 @@ def process_location_matching(data, context):
             raise e
 
 
-process_location_matching({'name': 'dviorel@inmarket.com/tgt_6_17_20___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/moments_location_form_template___no_mv_gcs.txt'}, None)

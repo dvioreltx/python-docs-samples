@@ -1,14 +1,14 @@
 import datetime
+import google.auth
 import logging
 import os
-import traceback
-import pytz
-import google.auth
 import pandas as pd
-from enum import Enum
+import pytz
+import traceback
 from airflow import DAG
 from airflow.operators.email_operator import EmailOperator
 from airflow.operators.python_operator import PythonOperator
+from enum import Enum
 from google.cloud import bigquery
 from google.cloud import storage
 
@@ -30,7 +30,7 @@ dag = DAG(
     schedule_interval=None
 )
 
-# Define functions and query strings
+# Define parameters and constants
 block_size = 5000
 delete_intermediate_tables = False
 delete_gcs_files = False
@@ -92,15 +92,13 @@ def _get_state_code(state, df_states):
     try:
         if len(state) == 2:
             return state
-    except TypeError as e:
+    except TypeError:
         return state
     if state == 'Washington DC':
         state = 'Washington'
     match = df_states[df_states['state_name'].str.strip().str.lower() == state.strip().lower()]
     if len(match) == 0:
-        return ' '
-    if len(match) > 1:
-        raise Exception(f'{len(match)} occurrences for state {state}!')
+        return ''
     return match.iloc[0]['state_abbr']
 
 
@@ -155,7 +153,7 @@ def _add_state_from_zip(table, bq_client):
 
 
 def _split_address_data(address_full, df_states, df_cities, include_zip, first_state):
-    address_full = address_full.replace(',', ' ')
+    address_full = f'{address_full}'.replace(',', ' ')
     tokens = address_full.split(' ')
     tokens = list(filter(None, tokens))
     length = len(tokens)
@@ -212,7 +210,6 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
             address = address_full[:address_full.rfind(state)]
             state = _get_state_code(state, df_states)
         else:
-            # try city with the previous token
             city_found = False
             position = address_full.rfind(state)
             sub_address = address_full[:position]
@@ -222,7 +219,6 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
             state = _get_state_code(state, df_states)
             address = sub_address[:sub_address.rfind(' ')]
             filtered_cities = df_cities[df_cities['state'] == state]
-            # 3 tokens
             if not city_found and len(sub_address_tokens) > 4:
                 expected_city = sub_address_tokens[len(sub_address_tokens) - 3] + ' ' + \
                                 sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
@@ -232,7 +228,6 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
                     city = expected_city
                     address = sub_address[:sub_address.rfind(expected_city)]
                     city_found = True
-            # 2 tokens
             if not city_found and len(sub_address_tokens) > 3:
                 expected_city = sub_address_tokens[len(sub_address_tokens) - 2] + ' ' + \
                                 sub_address_tokens[len(sub_address_tokens) - 1]
@@ -241,12 +236,8 @@ def _split_address_data(address_full, df_states, df_cities, include_zip, first_s
                     city = expected_city
                     address = sub_address[:sub_address.rfind(expected_city)]
                     city_found = True
-            # 1 token
             if not city_found:
-                expected_match = filtered_cities[filtered_cities['city'].str.lower() == city.lower()]
-                if len(expected_match.index) > 0:
-                    address = sub_address[:sub_address.rfind(city)]
-                    city_found = True
+                address = sub_address[:sub_address.rfind(city)]
     if not found:
         filtered_cities = df_cities[df_cities['state'] == state]
         for index_city, row_city in filtered_cities.iterrows():
@@ -1045,10 +1036,10 @@ def pre_process_file(**context):
                 if 'address_full__address__state__city__zip_' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full__address__state__city__zip_'],
                                                                          df_states, df_cities, True, True)
-                pre_processed_data.at[index, 'address'] = address
-                pre_processed_data.at[index, 'state'] = state
-                pre_processed_data.at[index, 'city'] = city
-                pre_processed_data.at[index, 'zip'] = zip_code
+                pre_processed_data.at[index, 'address'] = address.strip()
+                pre_processed_data.at[index, 'state'] = state.strip()
+                pre_processed_data.at[index, 'city'] = city.strip()
+                pre_processed_data.at[index, 'zip'] = zip_code.strip()
 
         pre_processed_data['zip'] = pre_processed_data['zip'].apply(lambda zip_code_lambda: _clean_zip(zip_code_lambda))
         pre_processed_data['state'] = pre_processed_data['state'].apply(lambda state_lambda:
