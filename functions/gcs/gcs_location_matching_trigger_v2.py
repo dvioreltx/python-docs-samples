@@ -370,12 +370,15 @@ def process_location_matching(data, context):
             try:
                 raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='iso-8859-1')
             except Exception as e:
-                logging.error(f'Error reading file, will send email format {e} and exit function: '
-                              f'{traceback.format_exc()}')
-                _send_mail(destination_email, f'File format error in Location Matching Tool for "{cf_name}"',
-                           f'"{cf_name}" is not a valid supported file type. Please verify the file '
-                           f'format is "Tab delimited Text(.txt)" before resubmitting for matching.')
-                return
+                try:
+                    raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='utf-16')
+                except Exception as e:
+                    logging.error(f'Error reading file, will send email format {e} and exit function: '
+                                  f'{traceback.format_exc()}')
+                    _send_mail(destination_email, f'File format error in Location Matching Tool for "{cf_name}"',
+                               f'"{cf_name}" is not a valid supported file type. Please verify the file '
+                               f'format is "Tab delimited Text(.txt)" before resubmitting for matching.')
+                    return
         credentials, your_project_id = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
         bq_storage_client = bigquery_storage_v1beta1.BigQueryStorageClient(credentials=credentials)
@@ -447,10 +450,10 @@ def process_location_matching(data, context):
                 if 'address_full__address__state__city__zip_' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full__address__state__city__zip_'],
                                                                          df_states, df_cities, True, True)
-                pre_processed_data.at[index, 'address'] = address.strip()
-                pre_processed_data.at[index, 'state'] = state.strip()
-                pre_processed_data.at[index, 'city'] = city.strip()
-                pre_processed_data.at[index, 'zip'] = zip_code.strip()
+                pre_processed_data.at[index, 'address'] = address.strip() if zip_code is not None else ''
+                pre_processed_data.at[index, 'state'] = state.strip() if zip_code is not None else ''
+                pre_processed_data.at[index, 'city'] = city.strip() if zip_code is not None else ''
+                pre_processed_data.at[index, 'zip'] = zip_code.strip() if zip_code is not None else ''
 
         pre_processed_data['zip'] = pre_processed_data['zip'].apply(lambda zip_code_lambda: _clean_zip(zip_code_lambda))
         pre_processed_data['state'] = pre_processed_data['state'].apply(lambda state_lambda:
@@ -536,4 +539,4 @@ def process_location_matching(data, context):
             raise e
 
 
-process_location_matching({'name': 'dviorel@inmarket.com/moments_location_form_template___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/crackerList_utf16___no_mv_gcs.txt'}, None)

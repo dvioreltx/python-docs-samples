@@ -109,14 +109,17 @@ def process_location_matching(data, context):
             raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='utf-8')
         except Exception:
             try:
-                raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='iso-8859-1')
-            except Exception as e:
-                logging.error(f'Error reading file, will send email format {e} and exit function: '
-                              f'{traceback.format_exc()}')
-                _send_mail(destination_email, f'File format error in Location Matching Tool for "{cf_name}"',
-                           f'"{cf_name}" is not a valid supported file type. Please verify the file '
-                           f'format is "Tab delimited Text(.txt)" before resubmitting for matching.')
-                return
+                raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='utf-16')
+            except Exception:
+                try:
+                    raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='iso-8859-1')
+                except Exception as e:
+                    logging.error(f'Error reading file, will send email format {e} and exit function: '
+                                  f'{traceback.format_exc()}')
+                    _send_mail(destination_email, f'File format error in Location Matching Tool for "{cf_name}"',
+                               f'"{cf_name}" is not a valid supported file type. Please verify the file '
+                               f'format is "Tab delimited Text(.txt)" before resubmitting for matching.')
+                    return
         raw_data.columns = map(str.lower, raw_data.columns)
         raw_data.columns = map(str.strip, raw_data.columns)
         column_validation_fields = _verify_fields(raw_data.keys(), validation_fields)
@@ -187,4 +190,4 @@ def process_location_matching(data, context):
             raise e
 
 
-process_location_matching({'name': 'dviorel@inmarket.com/address full no zip_2___no_mv_gcs.txt'}, None)
+process_location_matching({'name': 'dviorel@inmarket.com/crackerList_utf16___no_mv_gcs.txt'}, None)

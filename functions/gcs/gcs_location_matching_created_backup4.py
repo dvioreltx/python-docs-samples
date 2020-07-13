@@ -961,17 +961,14 @@ def pre_process_file(**context):
             raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='utf-8')
         except Exception:
             try:
-                raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='utf-16')
-            except Exception:
-                try:
-                    raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='iso-8859-1')
-                except Exception as e:
-                    logging.error(f'Error reading file, will send email format {e} and exit function: '
-                                  f'{traceback.format_exc()}')
-                    _send_mail(context, destination_email, f'File format error in Location Matching Tool for "{cf_name}"',
-                               f'"{cf_name}" is not a valid supported file type. Please verify the file '
-                               f'format is "Tab delimited Text(.txt)" before resubmitting for matching.')
-                    return
+                raw_data = pd.read_csv(f'gs://{bucket}/{original_name}', sep='\t', encoding='iso-8859-1')
+            except Exception as e:
+                logging.error(f'Error reading file, will send email format {e} and exit function: '
+                              f'{traceback.format_exc()}')
+                _send_mail(context, destination_email, f'File format error in Location Matching Tool for "{cf_name}"',
+                           f'"{cf_name}" is not a valid supported file type. Please verify the file '
+                           f'format is "Tab delimited Text(.txt)" before resubmitting for matching.')
+                return
         logging.info('Data read correctly')
         raw_data.columns = map(str.lower, raw_data.columns)
         raw_data.columns = map(str.strip, raw_data.columns)
@@ -1039,10 +1036,10 @@ def pre_process_file(**context):
                 if 'address_full__address__state__city__zip_' in pre_processed_data.columns:
                     address, state, city, zip_code = _split_address_data(row['address_full__address__state__city__zip_'],
                                                                          df_states, df_cities, True, True)
-                pre_processed_data.at[index, 'address'] = address.strip() if address is not None else ''
-                pre_processed_data.at[index, 'state'] = state.strip() if state is not None else ''
-                pre_processed_data.at[index, 'city'] = city.strip() if city is not None else ''
-                pre_processed_data.at[index, 'zip'] = zip_code.strip() if zip_code is not None else ''
+                pre_processed_data.at[index, 'address'] = address.strip()
+                pre_processed_data.at[index, 'state'] = state.strip()
+                pre_processed_data.at[index, 'city'] = city.strip()
+                pre_processed_data.at[index, 'zip'] = zip_code.strip()
 
         pre_processed_data['zip'] = pre_processed_data['zip'].apply(lambda zip_code_lambda: _clean_zip(zip_code_lambda))
         pre_processed_data['state'] = pre_processed_data['state'].apply(lambda state_lambda:
