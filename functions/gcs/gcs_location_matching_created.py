@@ -32,7 +32,7 @@ dag = DAG(
 
 # Define parameters and constants
 block_size = 5000
-delete_intermediate_tables = False
+delete_intermediate_tables = True
 delete_gcs_files = False
 data_set_original = "location_matching_file"
 data_set_final = "location_matching_match"
@@ -42,7 +42,7 @@ expiration_days_results_table = 30
 project = "cptsrewards-hrd"
 url_auth_gcp = 'https://www.googleapis.com/auth/cloud-platform'
 missing_required_fields_error = 'Missing required fields error'
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 query_states = 'SELECT state_abbr, state_name from aggdata.us_states'
 query_chains = 'SELECT chain_id, name, sic_code from `inmarket-archive`.scansense.chain'
 query_cities = 'select distinct city, state from (select distinct city, state from  `aggdata.' \
@@ -130,7 +130,8 @@ def _add_clean_fields(table, bq_client):
                             create or replace table {data_set_original}.{table} as 
                             select * except(chain_name), cast(chain_name AS STRING) chain_name, 
                             cleanstr(cast(chain_name AS STRING), 'chain') clean_chain, 
-                            cleanstr(street_address, 'addr') clean_addr, cleanstr(city, 'city') clean_city
+                            cleanstr(cast(street_address AS STRING), 'addr') clean_addr, 
+                            cleanstr(cast(city AS STRING), 'city') clean_city
                             from `{data_set_original}.{table}`  
         """
     query_job = bq_client.query(query, project=project)
@@ -279,7 +280,7 @@ def _send_mail(context, send_to, subject, body, attachments=None):
 def send_email_results(**context):
     try:
         preprocessed_table = context['dag_run'].conf['table']
-        logging.warning(f'It will send_email_results for {preprocessed_table}')
+        logging.info(f'It will send_email_results for {preprocessed_table}')
         file_name = preprocessed_table
         original_file_name = context['dag_run'].conf['original_file_name']
         file_name_email = context['dag_run'].conf['file_name']
@@ -287,27 +288,22 @@ def send_email_results(**context):
         credentials, _ = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
         destination_uri = f'gs://{bucket}/results/{destination_email}/{file_name}.csv'
-        logging.warning(f'log: send_email_results 02 desturi {destination_uri}')
         logging.info(f'Writing final CSV to {destination_uri} ...{original_file_name}')
         results_table = preprocessed_table + '_result'
         data_set_ref = bigquery.DatasetReference(project, data_set_original)
         table_ref = data_set_ref.table(results_table)
         extract_job = bq_client.extract_table(table_ref, destination_uri)
         extract_job.result()
-        logging.warning(f'log: send_email_results 03 downloaded in {destination_uri}')
         storage_client = storage.Client()
         the_bucket = storage_client.bucket(bucket)
         file_result = f'results/{destination_email}/{preprocessed_table}.csv'
         blob = the_bucket.blob(file_result)
         temp_local_file = f'/tmp/{file_name}.csv'
-        logging.warning(f'log: send_email_results 04 will download in {temp_local_file}')
         blob.download_to_filename(temp_local_file)
-        logging.warning(f'log: send_email_results 05 downloaded in {temp_local_file}')
         _send_mail(context, destination_email, f'{file_name_email} matched locations ',
                    'Hello,\n\nPlease see your location results attached. '
                    f'You can check the complete results in BigQuery - {data_set_final}.{preprocessed_table};',
                    [temp_local_file])
-        logging.warning(f'log: send_email_results 06 email sended')
         os.remove(temp_local_file)
         the_bucket.delete_blob(file_result)
     except Exception as e:
@@ -326,7 +322,7 @@ def _set_table_expiration(dataset, table_name, expiration_days, bq_client):
 
 def _run_location_matching(table, destination_table, bq_client, algorithm):
     query = None
-    logging.warning(f'Will run location_matching with {algorithm}')
+    logging.info(f'Will run location_matching with {algorithm}')
     if algorithm == LMAlgo.MULTI_CHAIN_ID or algorithm == LMAlgo.MULTI_CHAIN_NAME:
         field = 'chain_id' if algorithm == LMAlgo.MULTI_CHAIN_ID else 'chain_name'
         query = f"""#standardSQL
@@ -393,7 +389,6 @@ from (
 )
 where ar = 1;
         """
-    # elif algorithm == LMAlgo.CHAIN:
     elif algorithm == LMAlgo.CHAIN_ZIP or algorithm == LMAlgo.CHAIN_CITY:
         join_fields = 'lg_zip = zip' if algorithm == LMAlgo.CHAIN_ZIP else 'clean_city = clean_lg_city'
         query = f""" create temporary function strMatchRate(str1 STRING, str2 string, type string, city string) 
@@ -623,7 +618,7 @@ library=['gs://javascript_lib/addr_functions.js']
       """
     else:
         raise NotImplementedError(f'{algorithm} not implemented!')
-    logging.warning(f'It will run {query}')
+    logging.info(f'It will run {query}')
     query_job = bq_client.query(query, project=project)
     query_job.result()
 
@@ -660,7 +655,6 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
                     )
                  )order by store_id
             """
-    # elif algorithm == LMAlgo.CHAIN:
     elif algorithm == LMAlgo.CHAIN_ZIP or algorithm == LMAlgo.CHAIN_CITY:
         query = f"""CREATE OR REPLACE TABLE {data_set_final}.{final_table} AS
                     SELECT * FROM(
@@ -726,11 +720,10 @@ def _create_final_table(original_table, location_matching_table, final_table, bq
         """
     else:
         raise NotImplementedError(f'{algorithm} not expected!')
-    logging.warning(f'It will run {query}')
+    logging.debug(f'It will run {query}')
     query_job = bq_client.query(query, project=project)
     query_job.result()
     _set_table_expiration(data_set_final, final_table, expiration_days_results_table, bq_client)
-    # Also creates a results table with only non unlikely results
     results_table = final_table + '_result'
     query = f'''CREATE OR REPLACE TABLE {data_set_original}.{results_table} AS
                     select * from {data_set_final}.{final_table}
@@ -769,24 +762,19 @@ def execute_location_matching(**context):
         subtables = _should_split_process(bq_client, preprocessed_table, block_size, algorithm, has_zip, has_city)
         logging.info(f'Should split process: {subtables}')
         if subtables is not None:
-            # Build small tables
             logging.info(f'Small tables: {subtables}')
             _build_small_tables(bq_client, preprocessed_table, subtables)
-            # For each small table it runs the algorithm
             for table in subtables:
                 location_matching_table = table[0] + '_lm'
                 logging.info(f'Will run location_matching for: {location_matching_table}')
                 _run_location_matching(table[0], location_matching_table, bq_client, algorithm)
-            # Join every _lm_temp_XX result into a _lm final table
             location_matching_table = preprocessed_table + '_lm'
             logging.info(f'Will join all tables in {location_matching_table}')
             _join_results(bq_client, subtables, location_matching_table)
         else:
-            # If it ran with CHAIN_ZIP, first run is with zip, and then another with CITY, the last one in blocks
             if algorithm == LMAlgo.CHAIN_ZIP:
                 location_matching_table = preprocessed_table + '_first_lm'
                 _run_location_matching(preprocessed_table, location_matching_table, bq_client, algorithm)
-                # Build table with those rows that doesn't match
                 preprocessed_table_second = f'{preprocessed_table}_second'
                 query = f'''CREATE OR REPLACE TABLE {data_set_original}.{preprocessed_table_second} AS SELECT * FROM 
                         {data_set_original}.{preprocessed_table} WHERE store_id NOT IN (SELECT store_id FROM 
@@ -796,21 +784,16 @@ def execute_location_matching(**context):
                 logging.info(f'It will create second table with:\n{query}')
                 job = bq_client.query(query)
                 job.result()
-                # Get the small table names
                 subtables = _should_split_process(bq_client, preprocessed_table_second, block_size, LMAlgo.CHAIN_CITY,
                                                   has_zip, has_city, forced=True)
-                logging.warning(f'Should split process: {subtables}')
+                logging.debug(f'Should split process: {subtables}')
                 if subtables is not None:
-                    # For each small table it runs the algorithm
-                    logging.warning(f'Small tables: {subtables}')
+                    logging.debug(f'Small tables: {subtables}')
                     _build_small_tables(bq_client, preprocessed_table_second, subtables)
-                    # For each small table it runs the algorithm
                     for table in subtables:
                         location_matching_table = table[0] + '_lm'
                         logging.info(f'Will run location_matching for: {location_matching_table}')
-                        # Force to run with City
                         _run_location_matching(table[0], location_matching_table, bq_client, LMAlgo.CHAIN_CITY)
-                    # Join every _lm_temp_XX result into a _lm final table
                     location_matching_table = preprocessed_table_second + '_lm'
                     logging.info(f'Will join all tables in {location_matching_table}')
                     _join_results(bq_client, subtables, location_matching_table)
@@ -820,7 +803,6 @@ def execute_location_matching(**context):
                     _run_location_matching(preprocessed_table_second, location_matching_table, bq_client,
                                            LMAlgo.CHAIN_CITY)
                     logging.info(f'{location_matching_table} created!')
-                # Join the_lm table with the fist _lm table
                 query = f'''CREATE OR REPLACE TABLE {data_set_original}.{preprocessed_table}_lm AS
                             SELECT * FROM (SELECT * FROM {data_set_original}.{preprocessed_table}_first_lm
                             WHERE isa_match in ('definitely', 'very probably', 'probably')
@@ -937,10 +919,6 @@ def delete_temp_data(**context):
         if tables_data is not None:
             for table_data in tables_data:
                 bq_client.delete_table(f'{data_set_original}.{table_data[0]}')
-        if algo == LMAlgo.CHAIN_ZIP:
-            # TODO: To complete alternative_tables
-            pass
-        # Also it ask if its 2nd pass and it should delete list of tables
         bq_client.delete_table(f'{data_set_original}.{location_matching_table}')
         bq_client.delete_table(f'{data_set_original}.{result_table}')
 
@@ -993,7 +971,6 @@ def pre_process_file(**context):
         has_zip = 'zip' in raw_data.columns
         credentials, _ = google.auth.default(scopes=[url_auth_gcp])
         bq_client = bigquery.Client(project=project, credentials=credentials)
-        # Complete columns not present in file
         if 'chain_id' in pre_processed_data.columns:
             df_chains = pd.read_gbq(query_chains, project_id=project, dialect='standard')
             pre_processed_data['chain_name'] = pre_processed_data['chain_id'].apply(
@@ -1066,7 +1043,7 @@ def pre_process_file(**context):
         pre_processed_data.to_gbq(f'{data_set_original}.{preprocessed_table}', project_id=project, progress_bar=False,
                                   if_exists='replace')
         _set_table_expiration(data_set_original, preprocessed_table, expiration_days_original_table, bq_client)
-        logging.warning(f'It will add clean fields to: {preprocessed_table}')
+        logging.debug(f'It will add clean fields to: {preprocessed_table}')
         _add_clean_fields(preprocessed_table, bq_client)
         if should_add_state_from_zip:
             logging.info(f'It will add states from zip codes: {preprocessed_table}')
@@ -1081,7 +1058,7 @@ def pre_process_file(**context):
             source_bucket.copy_blob(from_blob, source_bucket,
                                     new_name=f'processed/{destination_email}/{now}_{file_name}.txt')
             source_bucket.delete_blob(from_blob.name)
-        logging.warning(f'Pre-process finished for {file_full_name}')
+        logging.info(f'Pre-process finished for {file_full_name}')
     except Exception as e:
         logging.exception(f'Error with {e} and this traceback: {traceback.format_exc()}')
         exception_message = f'{e}'
