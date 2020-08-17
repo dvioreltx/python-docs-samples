@@ -1042,12 +1042,12 @@ def pre_process_file(**context):
         logging.info(f'It will write to table: {preprocessed_table}')
         pre_processed_data.to_gbq(f'{data_set_original}.{preprocessed_table}', project_id=project, progress_bar=False,
                                   if_exists='replace')
-        _set_table_expiration(data_set_original, preprocessed_table, expiration_days_original_table, bq_client)
         logging.debug(f'It will add clean fields to: {preprocessed_table}')
         _add_clean_fields(preprocessed_table, bq_client)
         if should_add_state_from_zip:
             logging.info(f'It will add states from zip codes: {preprocessed_table}')
             _add_state_from_zip(preprocessed_table, bq_client)
+        _set_table_expiration(data_set_original, preprocessed_table, expiration_days_original_table, bq_client)
         storage_client = storage.Client()
         if delete_gcs_files and '___no_mv_gcs' not in file_full_name:
             source_bucket = storage_client.get_bucket(f'{bucket}')
